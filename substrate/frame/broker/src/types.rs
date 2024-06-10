@@ -55,7 +55,7 @@ pub enum Finality {
 pub struct RegionId {
 	/// The timeslice at which this Region begins.
 	pub begin: Timeslice,
-	/// The index of the Polkadot Core on which this Region will be scheduled.
+	/// The index of the Polakdot Core on which this Region will be scheduled.
 	pub core: CoreIndex,
 	/// The regularity parts in which this Region will be scheduled.
 	pub mask: CoreMask,
@@ -84,7 +84,7 @@ pub struct RegionRecord<AccountId, Balance> {
 	/// The end of the Region.
 	pub end: Timeslice,
 	/// The owner of the Region.
-	pub owner: Option<AccountId>,
+	pub owner: AccountId,
 	/// The amount paid to Polkadot for this Region, or `None` if renewal is not allowed.
 	pub paid: Option<Balance>,
 }
@@ -152,28 +152,25 @@ impl CompletionStatus {
 	}
 }
 
-/// The identity of a possibly renewable Core workload.
+/// The identity of a possible Core workload renewal.
 #[derive(Encode, Decode, Copy, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
-pub struct PotentialRenewalId {
+pub struct AllowedRenewalId {
 	/// The core whose workload at the sale ending with `when` may be renewed to begin at `when`.
 	pub core: CoreIndex,
 	/// The point in time that the renewable workload on `core` ends and a fresh renewal may begin.
 	pub when: Timeslice,
 }
 
-/// A record of a potential renewal.
-///
-/// The renewal will only actually be allowed if `CompletionStatus` is `Complete` at the time of
-/// renewal.
+/// A record of an allowed renewal.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
-pub struct PotentialRenewalRecord<Balance> {
+pub struct AllowedRenewalRecord<Balance> {
 	/// The price for which the next renewal can be made.
 	pub price: Balance,
 	/// The workload which will be scheduled on the Core in the case a renewal is made, or if
 	/// incomplete, then the parts of the core which have been scheduled.
 	pub completion: CompletionStatus,
 }
-pub type PotentialRenewalRecordOf<T> = PotentialRenewalRecord<BalanceOf<T>>;
+pub type AllowedRenewalRecordOf<T> = AllowedRenewalRecord<BalanceOf<T>>;
 
 /// General status of the system.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
@@ -201,7 +198,7 @@ pub struct PoolIoRecord {
 	/// The total change of the portion of the pool supplied by purchased Bulk Coretime, measured
 	/// in Core Mask Bits.
 	pub private: SignedCoreMaskBitCount,
-	/// The total change of the portion of the pool supplied by the Polkadot System, measured in
+	/// The total change of the portion of the pool supplied by the Polkaot System, measured in
 	/// Core Mask Bits.
 	pub system: SignedCoreMaskBitCount,
 }
@@ -214,7 +211,7 @@ pub struct SaleInfoRecord<Balance, BlockNumber> {
 	/// The length in blocks of the Leadin Period (where the price is decreasing).
 	pub leadin_length: BlockNumber,
 	/// The price of Bulk Coretime after the Leadin Period.
-	pub end_price: Balance,
+	pub price: Balance,
 	/// The first timeslice of the Regions which are being sold in this sale.
 	pub region_begin: Timeslice,
 	/// The timeslice on which the Regions which are being sold in the sale terminate. (i.e. One
@@ -228,9 +225,8 @@ pub struct SaleInfoRecord<Balance, BlockNumber> {
 	/// The index of the first core which is for sale. Core of Regions which are sold have
 	/// incrementing indices from this.
 	pub first_core: CoreIndex,
-	/// The price at which cores have been sold out.
-	///
-	/// Will only be `None` if no core was offered for sale.
+	/// The latest price at which Bulk Coretime was purchased until surpassing the ideal number of
+	/// cores were sold.
 	pub sellout_price: Option<Balance>,
 	/// Number of cores which have been sold; never more than cores_offered.
 	pub cores_sold: CoreIndex,
@@ -267,11 +263,8 @@ pub struct ConfigRecord<BlockNumber, RelayBlockNumber> {
 	pub leadin_length: BlockNumber,
 	/// The length in timeslices of Regions which are up for sale in forthcoming sales.
 	pub region_length: Timeslice,
-	/// The proportion of cores available for sale which should be sold.
-	///
-	/// If more cores are sold than this, then further sales will no longer be considered in
-	/// determining the sellout price. In other words the sellout price will be the last price
-	/// paid, without going over this limit.
+	/// The proportion of cores available for sale which should be sold in order for the price
+	/// to remain the same in the next sale.
 	pub ideal_bulk_proportion: Perbill,
 	/// An artificial limit to the number of cores which are allowed to be sold. If `Some` then
 	/// no more cores will be sold than this.

@@ -36,9 +36,6 @@ mod tick_impls;
 mod types;
 mod utility_impls;
 
-pub mod migration;
-pub mod runtime_api;
-
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -46,9 +43,6 @@ pub use adapt_price::*;
 pub use core_mask::*;
 pub use coretime_interface::*;
 pub use types::*;
-
-/// The log target for this pallet.
-const LOG_TARGET: &str = "runtime::broker";
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -65,10 +59,7 @@ pub mod pallet {
 	use sp_runtime::traits::{Convert, ConvertBack};
 	use sp_std::vec::Vec;
 
-	const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
-
 	#[pallet::pallet]
-	#[pallet::storage_version(STORAGE_VERSION)]
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
@@ -92,7 +83,7 @@ pub mod pallet {
 		type Coretime: CoretimeInterface;
 
 		/// The algorithm to determine the next price on the basis of market performance.
-		type PriceAdapter: AdaptPrice<BalanceOf<Self>>;
+		type PriceAdapter: AdaptPrice;
 
 		/// Reversible conversion from local balance to Relay-chain balance. This will typically be
 		/// the `Identity`, but provided just in case the chains use different representations.
@@ -136,14 +127,12 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type SaleInfo<T> = StorageValue<_, SaleInfoRecordOf<T>, OptionQuery>;
 
-	/// Records of potential renewals.
-	///
-	/// Renewals will only actually be allowed if `CompletionStatus` is actually `Complete`.
+	/// Records of allowed renewals.
 	#[pallet::storage]
-	pub type PotentialRenewals<T> =
-		StorageMap<_, Twox64Concat, PotentialRenewalId, PotentialRenewalRecordOf<T>, OptionQuery>;
+	pub type AllowedRenewals<T> =
+		StorageMap<_, Twox64Concat, AllowedRenewalId, AllowedRenewalRecordOf<T>, OptionQuery>;
 
-	/// The current (unassigned or provisionally assigend) Regions.
+	/// The current (unassigned) Regions.
 	#[pallet::storage]
 	pub type Regions<T> = StorageMap<_, Blake2_128Concat, RegionId, RegionRecordOf<T>, OptionQuery>;
 
@@ -225,9 +214,9 @@ pub mod pallet {
 			/// The duration of the Region.
 			duration: Timeslice,
 			/// The old owner of the Region.
-			old_owner: Option<T::AccountId>,
+			old_owner: T::AccountId,
 			/// The new owner of the Region.
-			owner: Option<T::AccountId>,
+			owner: T::AccountId,
 		},
 		/// A Region has been split into two non-overlapping Regions.
 		Partitioned {
@@ -292,13 +281,14 @@ pub mod pallet {
 			/// The price of Bulk Coretime at the beginning of the Leadin Period.
 			start_price: BalanceOf<T>,
 			/// The price of Bulk Coretime after the Leadin Period.
-			end_price: BalanceOf<T>,
+			regular_price: BalanceOf<T>,
 			/// The first timeslice of the Regions which are being sold in this sale.
 			region_begin: Timeslice,
 			/// The timeslice on which the Regions which are being sold in the sale terminate.
 			/// (i.e. One after the last timeslice which the Regions control.)
 			region_end: Timeslice,
-			/// The number of cores we want to sell, ideally.
+			/// The number of cores we want to sell, ideally. Selling this amount would result in
+			/// no change to the price for the next sale.
 			ideal_cores_sold: CoreIndex,
 			/// Number of cores which are/have been offered for sale.
 			cores_offered: CoreIndex,
@@ -414,7 +404,7 @@ pub mod pallet {
 			assignment: Vec<(CoreAssignment, PartsOf57600)>,
 		},
 		/// Some historical Instantaneous Core Pool payment record has been dropped.
-		PotentialRenewalDropped {
+		AllowedRenewalDropped {
 			/// The timeslice whose renewal is no longer available.
 			when: Timeslice,
 			/// The core whose workload is no longer available to be renewed for `when`.
@@ -484,8 +474,6 @@ pub mod pallet {
 		AlreadyExpired,
 		/// The configuration could not be applied because it is invalid.
 		InvalidConfig,
-		/// The revenue must be claimed for 1 or more timeslices.
-		NoClaimTimeslices,
 	}
 
 	#[pallet::hooks]
@@ -559,23 +547,17 @@ pub mod pallet {
 		/// Begin the Bulk Coretime sales rotation.
 		///
 		/// - `origin`: Must be Root or pass `AdminOrigin`.
-		/// - `end_price`: The price after the leadin period of Bulk Coretime in the first sale.
-		/// - `extra_cores`: Number of extra cores that should be requested on top of the cores
-		///   required for `Reservations` and `Leases`.
-		///
-		/// This will call [`Self::request_core_count`] internally to set the correct core count on
-		/// the relay chain.
+		/// - `initial_price`: The price of Bulk Coretime in the first sale.
+		/// - `core_count`: The number of cores which can be allocated.
 		#[pallet::call_index(4)]
-		#[pallet::weight(T::WeightInfo::start_sales(
-			T::MaxLeasedCores::get() + T::MaxReservedCores::get() + *extra_cores as u32
-		))]
+		#[pallet::weight(T::WeightInfo::start_sales((*core_count).into()))]
 		pub fn start_sales(
 			origin: OriginFor<T>,
-			end_price: BalanceOf<T>,
-			extra_cores: CoreIndex,
+			initial_price: BalanceOf<T>,
+			core_count: CoreIndex,
 		) -> DispatchResultWithPostInfo {
 			T::AdminOrigin::ensure_origin_or_root(origin)?;
-			Self::do_start_sales(end_price, extra_cores)?;
+			Self::do_start_sales(initial_price, core_count)?;
 			Ok(Pays::No.into())
 		}
 
@@ -698,12 +680,13 @@ pub mod pallet {
 
 		/// Claim the revenue owed from inclusion in the Instantaneous Coretime Pool.
 		///
-		/// - `origin`: Must be a Signed origin.
+		/// - `origin`: Must be a Signed origin of the account which owns the Region `region_id`.
 		/// - `region_id`: The Region which was assigned to the Pool.
-		/// - `max_timeslices`: The maximum number of timeslices which should be processed. This
-		///   must be greater than 0. This may affect the weight of the call but should be ideally
-		///   made equivalent to the length of the Region `region_id`. If less, further dispatches
-		///   will be required with the same `region_id` to claim revenue for the remainder.
+		/// - `max_timeslices`: The maximum number of timeslices which should be processed. This may
+		///   effect the weight of the call but should be ideally made equivalant to the length of
+		///   the Region `region_id`. If it is less than this, then further dispatches will be
+		///   required with the `region_id` which makes up any remainders of the region to be
+		///   collected.
 		#[pallet::call_index(12)]
 		#[pallet::weight(T::WeightInfo::claim_revenue(*max_timeslices))]
 		pub fn claim_revenue(
@@ -801,14 +784,6 @@ pub mod pallet {
 		pub fn notify_core_count(origin: OriginFor<T>, core_count: CoreIndex) -> DispatchResult {
 			T::AdminOrigin::ensure_origin_or_root(origin)?;
 			Self::do_notify_core_count(core_count)?;
-			Ok(())
-		}
-
-		#[pallet::call_index(99)]
-		#[pallet::weight(T::WeightInfo::swap_leases())]
-		pub fn swap_leases(origin: OriginFor<T>, id: TaskId, other: TaskId) -> DispatchResult {
-			T::AdminOrigin::ensure_origin_or_root(origin)?;
-			Self::do_swap_leases(id, other)?;
 			Ok(())
 		}
 	}

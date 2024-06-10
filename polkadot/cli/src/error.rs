@@ -17,7 +17,7 @@
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
 	#[error(transparent)]
-	PolkadotService(#[from] polkadot_service::Error),
+	PolkadotService(#[from] service::Error),
 
 	#[error(transparent)]
 	SubstrateCli(#[from] sc_cli::Error),
@@ -34,7 +34,7 @@ pub enum Error {
 
 	#[cfg(feature = "pyroscope")]
 	#[error("Failed to connect to pyroscope agent")]
-	PyroscopeError(#[from] pyroscope::error::PyroscopeError),
+	PyroscopeError(#[from] pyro::error::PyroscopeError),
 
 	#[error("Failed to resolve provided URL")]
 	AddressResolutionFailure(#[from] std::io::Error),

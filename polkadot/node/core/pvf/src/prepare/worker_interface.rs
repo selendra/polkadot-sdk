@@ -25,7 +25,7 @@ use crate::{
 	},
 	LOG_TARGET,
 };
-use codec::{Decode, Encode};
+use parity_scale_codec::{Decode, Encode};
 use polkadot_node_core_pvf_common::{
 	error::{PrepareError, PrepareResult, PrepareWorkerResult},
 	prepare::{PrepareStats, PrepareSuccess, PrepareWorkerSuccess},
@@ -174,7 +174,7 @@ pub async fn start_work(
 					gum::warn!(
 						target: LOG_TARGET,
 						worker_pid = %pid,
-						"failed to recv a prepare response: {}",
+						"failed to recv a prepare response: {:?}",
 						err,
 					);
 					Outcome::IoErr(err.to_string())
@@ -234,19 +234,6 @@ async fn handle_response(
 		return Outcome::TimedOut
 	}
 
-	let size = match tokio::fs::metadata(cache_path).await {
-		Ok(metadata) => metadata.len(),
-		Err(err) => {
-			gum::warn!(
-				target: LOG_TARGET,
-				?cache_path,
-				"failed to read size of the artifact: {}",
-				err,
-			);
-			return Outcome::IoErr(err.to_string())
-		},
-	};
-
 	// The file name should uniquely identify the artifact even across restarts. In case the cache
 	// for some reason is not cleared correctly, we cannot
 	// accidentally execute an artifact compiled under a different wasmtime version, host
@@ -266,7 +253,6 @@ async fn handle_response(
 			worker,
 			result: Ok(PrepareSuccess {
 				path: artifact_path,
-				size,
 				stats: PrepareStats { cpu_time_elapsed, memory_stats: memory_stats.clone() },
 			}),
 		},

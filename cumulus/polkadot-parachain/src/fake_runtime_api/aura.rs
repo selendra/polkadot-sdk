@@ -39,7 +39,7 @@ sp_api::impl_runtime_apis! {
 			unimplemented!()
 		}
 
-		fn initialize_block(_: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
+		fn initialize_block(_: &<Block as BlockT>::Header) {
 			unimplemented!()
 		}
 	}
@@ -189,15 +189,11 @@ sp_api::impl_runtime_apis! {
 	}
 
 	impl sp_genesis_builder::GenesisBuilder<Block> for Runtime {
-		fn build_state(_: Vec<u8>) -> sp_genesis_builder::Result {
+		fn create_default_config() -> Vec<u8> {
 			unimplemented!()
 		}
 
-		fn get_preset(_id: &Option<sp_genesis_builder::PresetId>) -> Option<Vec<u8>> {
-			unimplemented!()
-		}
-
-		fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
+		fn build_config(_: Vec<u8>) -> sp_genesis_builder::Result {
 			unimplemented!()
 		}
 	}

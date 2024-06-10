@@ -18,15 +18,16 @@
 
 use xcm::latest::prelude::*;
 
-/// Returns the delivery fees amount for pallet xcm's `teleport_assets` extrinsics.
+/// Returns the delivery fees amount for pallet xcm's `teleport_assets` and
+/// `reserve_transfer_assets` extrinsics.
 /// Because it returns only a `u128`, it assumes delivery fees are only paid
 /// in one asset and that asset is known.
-pub fn teleport_assets_delivery_fees<S: SendXcm>(
-	assets: Assets,
+pub fn transfer_assets_delivery_fees<S: SendXcm>(
+	assets: MultiAssets,
 	fee_asset_item: u32,
 	weight_limit: WeightLimit,
-	beneficiary: Location,
-	destination: Location,
+	beneficiary: MultiLocation,
+	destination: MultiLocation,
 ) -> u128 {
 	let message = teleport_assets_dummy_message(assets, fee_asset_item, weight_limit, beneficiary);
 	get_fungible_delivery_fees::<S>(destination, message)
@@ -34,7 +35,7 @@ pub fn teleport_assets_delivery_fees<S: SendXcm>(
 
 /// Returns the delivery fees amount for a query response as a result of the execution
 /// of a `ExpectError` instruction with no error.
-pub fn query_response_delivery_fees<S: SendXcm>(querier: Location) -> u128 {
+pub fn query_response_delivery_fees<S: SendXcm>(querier: MultiLocation) -> u128 {
 	// Message to calculate delivery fees, it's encoded size is what's important.
 	// This message reports that there was no error, if an error is reported, the encoded size would
 	// be different.
@@ -44,7 +45,7 @@ pub fn query_response_delivery_fees<S: SendXcm>(querier: Location) -> u128 {
 			query_id: 0, // Dummy query id
 			response: Response::ExecutionResult(None),
 			max_weight: Weight::zero(),
-			querier: Some(querier.clone()),
+			querier: Some(querier),
 		},
 		SetTopic([0u8; 32]), // Dummy topic
 	]);
@@ -54,9 +55,9 @@ pub fn query_response_delivery_fees<S: SendXcm>(querier: Location) -> u128 {
 /// Returns the delivery fees amount for the execution of `PayOverXcm`
 pub fn pay_over_xcm_delivery_fees<S: SendXcm>(
 	interior: Junctions,
-	destination: Location,
-	beneficiary: Location,
-	asset: Asset,
+	destination: MultiLocation,
+	beneficiary: MultiLocation,
+	asset: MultiAsset,
 ) -> u128 {
 	// This is a dummy message.
 	// The encoded size is all that matters for delivery fees.
@@ -65,11 +66,7 @@ pub fn pay_over_xcm_delivery_fees<S: SendXcm>(
 		UnpaidExecution { weight_limit: Unlimited, check_origin: None },
 		SetAppendix(Xcm(vec![
 			SetFeesMode { jit_withdraw: true },
-			ReportError(QueryResponseInfo {
-				destination: destination.clone(),
-				query_id: 0,
-				max_weight: Weight::zero(),
-			}),
+			ReportError(QueryResponseInfo { destination, query_id: 0, max_weight: Weight::zero() }),
 		])),
 		TransferAsset { beneficiary, assets: vec![asset].into() },
 	]);
@@ -81,10 +78,10 @@ pub fn pay_over_xcm_delivery_fees<S: SendXcm>(
 /// However, it should have the same encoded size, which is what matters for delivery fees.
 /// Also has same encoded size as the one created by the reserve transfer assets extrinsic.
 fn teleport_assets_dummy_message(
-	assets: Assets,
+	assets: MultiAssets,
 	fee_asset_item: u32,
 	weight_limit: WeightLimit,
-	beneficiary: Location,
+	beneficiary: MultiLocation,
 ) -> Xcm<()> {
 	Xcm(vec![
 		ReceiveTeleportedAsset(assets.clone()), // Same encoded size as `ReserveAssetDeposited`
@@ -96,7 +93,7 @@ fn teleport_assets_dummy_message(
 }
 
 /// Given a message, a sender, and a destination, it returns the delivery fees
-fn get_fungible_delivery_fees<S: SendXcm>(destination: Location, message: Xcm<()>) -> u128 {
+fn get_fungible_delivery_fees<S: SendXcm>(destination: MultiLocation, message: Xcm<()>) -> u128 {
 	let Ok((_, delivery_fees)) = validate_send::<S>(destination, message) else {
 		unreachable!("message can be sent; qed")
 	};

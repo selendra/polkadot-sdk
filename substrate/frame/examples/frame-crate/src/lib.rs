@@ -49,13 +49,13 @@ mod tests {
 	use frame::testing_prelude::*;
 
 	construct_runtime!(
-		pub enum Runtime {
+		pub struct Runtime {
 			System: frame_system,
 			MyPallet: my_pallet,
 		}
 	);
 
-	#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+	#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 	impl frame_system::Config for Runtime {
 		type Block = MockBlock<Self>;
 	}

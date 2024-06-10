@@ -15,13 +15,14 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 use super::*;
+use ::test_helpers::{dummy_hash, make_valid_candidate_descriptor};
 use assert_matches::assert_matches;
 use futures::executor;
 use polkadot_node_core_pvf::PrepareError;
 use polkadot_node_subsystem::messages::AllMessages;
+use polkadot_node_subsystem_test_helpers as test_helpers;
 use polkadot_node_subsystem_util::reexports::SubsystemContext;
 use polkadot_primitives::{HeadData, Id as ParaId, UpwardMessage};
-use polkadot_primitives_test_helpers::{dummy_hash, make_valid_candidate_descriptor};
 use sp_core::testing::TaskExecutor;
 use sp_keyring::Sr25519Keyring;
 
@@ -46,10 +47,8 @@ fn correctly_checks_included_assumption() {
 	);
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = check_assumption_validation_data(
 		ctx.sender(),
@@ -120,10 +119,8 @@ fn correctly_checks_timed_out_assumption() {
 	);
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = check_assumption_validation_data(
 		ctx.sender(),
@@ -192,10 +189,8 @@ fn check_is_bad_request_if_no_validation_data() {
 	);
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = check_assumption_validation_data(
 		ctx.sender(),
@@ -248,10 +243,8 @@ fn check_is_bad_request_if_no_validation_code() {
 	);
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = check_assumption_validation_data(
 		ctx.sender(),
@@ -316,10 +309,8 @@ fn check_does_not_match() {
 	);
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = check_assumption_validation_data(
 		ctx.sender(),
@@ -377,7 +368,6 @@ impl ValidationBackend for MockValidateCandidateBackend {
 		_pvf: PvfPrepData,
 		_timeout: Duration,
 		_encoded_params: Vec<u8>,
-		_prepare_priority: polkadot_node_core_pvf::Priority,
 	) -> Result<WasmValidationResult, ValidationError> {
 		// This is expected to panic if called more times than expected, indicating an error in the
 		// test.
@@ -859,10 +849,7 @@ fn candidate_validation_code_mismatch_is_invalid() {
 	let candidate_receipt = CandidateReceipt { descriptor, commitments_hash: Hash::zero() };
 
 	let pool = TaskExecutor::new();
-	let (_ctx, _ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (_ctx, _ctx_handle) = test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let v = executor::block_on(validate_candidate_exhaustive(
 		MockValidateCandidateBackend::with_hardcoded_result(Err(ValidationError::Invalid(
@@ -972,10 +959,7 @@ fn code_decompression_failure_is_error() {
 	let candidate_receipt = CandidateReceipt { descriptor, commitments_hash: Hash::zero() };
 
 	let pool = TaskExecutor::new();
-	let (_ctx, _ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (_ctx, _ctx_handle) = test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let v = executor::block_on(validate_candidate_exhaustive(
 		MockValidateCandidateBackend::with_hardcoded_result(Ok(validation_result)),
@@ -1027,10 +1011,7 @@ fn pov_decompression_failure_is_invalid() {
 	let candidate_receipt = CandidateReceipt { descriptor, commitments_hash: Hash::zero() };
 
 	let pool = TaskExecutor::new();
-	let (_ctx, _ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (_ctx, _ctx_handle) = test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let v = executor::block_on(validate_candidate_exhaustive(
 		MockValidateCandidateBackend::with_hardcoded_result(Ok(validation_result)),
@@ -1063,7 +1044,6 @@ impl ValidationBackend for MockPreCheckBackend {
 		_pvf: PvfPrepData,
 		_timeout: Duration,
 		_encoded_params: Vec<u8>,
-		_prepare_priority: polkadot_node_core_pvf::Priority,
 	) -> Result<WasmValidationResult, ValidationError> {
 		unreachable!()
 	}
@@ -1080,10 +1060,8 @@ fn precheck_works() {
 	let validation_code_hash = validation_code.hash();
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = precheck_pvf(
 		ctx.sender(),
@@ -1144,10 +1122,8 @@ fn precheck_invalid_pvf_blob_compression() {
 	let validation_code_hash = validation_code.hash();
 
 	let pool = TaskExecutor::new();
-	let (mut ctx, mut ctx_handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context::<
-		AllMessages,
-		_,
-	>(pool.clone());
+	let (mut ctx, mut ctx_handle) =
+		test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 	let (check_fut, check_result) = precheck_pvf(
 		ctx.sender(),
@@ -1205,9 +1181,7 @@ fn precheck_properly_classifies_outcomes() {
 
 		let pool = TaskExecutor::new();
 		let (mut ctx, mut ctx_handle) =
-			polkadot_node_subsystem_test_helpers::make_subsystem_context::<AllMessages, _>(
-				pool.clone(),
-			);
+			test_helpers::make_subsystem_context::<AllMessages, _>(pool.clone());
 
 		let (check_fut, check_result) = precheck_pvf(
 			ctx.sender(),

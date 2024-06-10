@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::AssetsInHolding;
+use crate::Assets;
 use sp_std::result::Result;
 use xcm::latest::{prelude::*, Weight};
 
@@ -33,7 +33,7 @@ pub trait WeightBounds<RuntimeCall> {
 /// message.
 pub trait UniversalWeigher {
 	/// Get the upper limit of weight required for `dest` to execute `message`.
-	fn weigh(dest: impl Into<Location>, message: Xcm<()>) -> Result<Weight, ()>;
+	fn weigh(dest: impl Into<MultiLocation>, message: Xcm<()>) -> Result<Weight, ()>;
 }
 
 /// Charge for weight in order to execute XCM.
@@ -52,15 +52,15 @@ pub trait WeightTrader: Sized {
 	fn buy_weight(
 		&mut self,
 		weight: Weight,
-		payment: AssetsInHolding,
+		payment: Assets,
 		context: &XcmContext,
-	) -> Result<AssetsInHolding, XcmError>;
+	) -> Result<Assets, XcmError>;
 
 	/// Attempt a refund of `weight` into some asset. The caller does not guarantee that the weight
 	/// was purchased using `buy_weight`.
 	///
 	/// Default implementation refunds nothing.
-	fn refund_weight(&mut self, _weight: Weight, _context: &XcmContext) -> Option<Asset> {
+	fn refund_weight(&mut self, _weight: Weight, _context: &XcmContext) -> Option<MultiAsset> {
 		None
 	}
 }
@@ -74,9 +74,9 @@ impl WeightTrader for Tuple {
 	fn buy_weight(
 		&mut self,
 		weight: Weight,
-		payment: AssetsInHolding,
+		payment: Assets,
 		context: &XcmContext,
-	) -> Result<AssetsInHolding, XcmError> {
+	) -> Result<Assets, XcmError> {
 		let mut too_expensive_error_found = false;
 		let mut last_error = None;
 		for_tuples!( #(
@@ -102,7 +102,7 @@ impl WeightTrader for Tuple {
 		})
 	}
 
-	fn refund_weight(&mut self, weight: Weight, context: &XcmContext) -> Option<Asset> {
+	fn refund_weight(&mut self, weight: Weight, context: &XcmContext) -> Option<MultiAsset> {
 		for_tuples!( #(
 			if let Some(asset) = Tuple.refund_weight(weight, context) {
 				return Some(asset);

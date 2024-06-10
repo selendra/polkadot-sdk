@@ -30,10 +30,9 @@ use sp_runtime::{
 	BuildStorage,
 };
 use xcm::prelude::*;
-use xcm_builder::{
-	FixedWeightBounds, FrameTransactionalProcessor, FungibleAdapter, IsConcrete, NativeAsset,
-	ParentIsPreset,
-};
+#[allow(deprecated)]
+use xcm_builder::CurrencyAdapter;
+use xcm_builder::{FixedWeightBounds, IsConcrete, NativeAsset, ParentIsPreset};
 use xcm_executor::traits::ConvertOrigin;
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -52,12 +51,13 @@ frame_support::construct_runtime!(
 );
 
 parameter_types! {
+	pub const BlockHashCount: u64 = 250;
 	pub const SS58Prefix: u8 = 42;
 }
 
 type AccountId = u64;
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
 	type BaseCallFilter = Everything;
 	type BlockWeights = ();
@@ -72,6 +72,7 @@ impl frame_system::Config for Test {
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
 	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = BlockHashCount;
 	type Version = ();
 	type PalletInfo = PalletInfo;
 	type AccountData = pallet_balances::AccountData<u64>;
@@ -103,6 +104,7 @@ impl pallet_balances::Config for Test {
 	type RuntimeHoldReason = RuntimeHoldReason;
 	type RuntimeFreezeReason = RuntimeFreezeReason;
 	type FreezeIdentifier = ();
+	type MaxHolds = ConstU32<0>;
 	type MaxFreezes = ConstU32<0>;
 }
 
@@ -122,20 +124,21 @@ impl cumulus_pallet_parachain_system::Config for Test {
 }
 
 parameter_types! {
-	pub const RelayChain: Location = Location::parent();
-	pub UniversalLocation: InteriorLocation = [Parachain(1u32)].into();
+	pub const RelayChain: MultiLocation = MultiLocation::parent();
+	pub UniversalLocation: InteriorMultiLocation = X1(Parachain(1u32));
 	pub UnitWeightCost: Weight = Weight::from_parts(1_000_000, 1024);
 	pub const MaxInstructions: u32 = 100;
 	pub const MaxAssetsIntoHolding: u32 = 64;
 }
 
 /// Means for transacting assets on this chain.
-pub type LocalAssetTransactor = FungibleAdapter<
+#[allow(deprecated)]
+pub type LocalAssetTransactor = CurrencyAdapter<
 	// Use this currency:
 	Balances,
 	// Use this currency when it is a fungible asset matching the given location or name:
 	IsConcrete<RelayChain>,
-	// Do a simple punn to convert an AccountId32 Location into a native chain account ID:
+	// Do a simple punn to convert an AccountId32 MultiLocation into a native chain account ID:
 	LocationToAccountId,
 	// Our chain's account ID type (we can't get away without mentioning it explicitly):
 	AccountId,
@@ -172,11 +175,6 @@ impl xcm_executor::Config for XcmConfig {
 	type CallDispatcher = RuntimeCall;
 	type SafeCallFilter = Everything;
 	type Aliasers = Nothing;
-	type TransactionalProcessor = FrameTransactionalProcessor;
-	type HrmpNewChannelOpenRequestHandler = ();
-	type HrmpChannelAcceptedHandler = ();
-	type HrmpChannelClosingHandler = ();
-	type XcmRecorder = ();
 }
 
 pub type XcmRouter = (
@@ -189,14 +187,17 @@ impl<RuntimeOrigin: OriginTrait> ConvertOrigin<RuntimeOrigin>
 	for SystemParachainAsSuperuser<RuntimeOrigin>
 {
 	fn convert_origin(
-		origin: impl Into<Location>,
+		origin: impl Into<MultiLocation>,
 		kind: OriginKind,
-	) -> Result<RuntimeOrigin, Location> {
+	) -> Result<RuntimeOrigin, MultiLocation> {
 		let origin = origin.into();
 		if kind == OriginKind::Superuser &&
 			matches!(
-				origin.unpack(),
-				(1,	[Parachain(id)]) if ParaId::from(*id).is_system(),
+				origin,
+				MultiLocation {
+					parents: 1,
+					interior: X1(Parachain(id)),
+				} if ParaId::from(id).is_system(),
 			) {
 			Ok(RuntimeOrigin::root())
 		} else {
@@ -249,14 +250,13 @@ impl<T: OnQueueChanged<ParaId>> EnqueueMessage<ParaId> for EnqueueToLocalStorage
 			}
 		}
 		footprint.pages = footprint.storage.size as u32 / 16; // Number does not matter
-		footprint.ready_pages = footprint.pages;
 		footprint
 	}
 }
 
 parameter_types! {
 	/// The asset ID for the asset that we use to pay for message delivery fees.
-	pub FeeAssetId: AssetId = AssetId(RelayChain::get());
+	pub FeeAssetId: AssetId = Concrete(RelayChain::get());
 	/// The base fee for the message delivery fees.
 	pub const BaseDeliveryFee: Balance = 300_000_000;
 	/// The fee per byte
@@ -275,11 +275,7 @@ impl Config for Test {
 	type ChannelInfo = MockedChannelInfo;
 	type VersionWrapper = ();
 	type XcmpQueue = EnqueueToLocalStorage<Pallet<Test>>;
-	type MaxInboundSuspended = ConstU32<1_000>;
-	type MaxActiveOutboundChannels = ConstU32<128>;
-	// Most on-chain HRMP channels are configured to use 102400 bytes of max message size, so we
-	// need to set the page size larger than that until we reduce the channel size on-chain.
-	type MaxPageSize = ConstU32<{ 103 * 1024 }>;
+	type MaxInboundSuspended = sp_core::ConstU32<1_000>;
 	type ControllerOrigin = EnsureRoot<AccountId>;
 	type ControllerOriginConverter = SystemParachainAsSuperuser<RuntimeOrigin>;
 	type WeightInfo = ();
@@ -321,13 +317,10 @@ impl GetChannelInfo for MockedChannelInfo {
 pub(crate) fn mk_page() -> Vec<u8> {
 	let mut page = Vec::<u8>::new();
 
-	let newer_xcm_version = xcm::prelude::XCM_VERSION;
-	let older_xcm_version = newer_xcm_version - 1;
-
 	for i in 0..100 {
 		page.extend(match i % 2 {
-			0 => versioned_xcm(older_xcm_version).encode(),
-			1 => versioned_xcm(newer_xcm_version).encode(),
+			0 => v2_xcm().encode(),
+			1 => v3_xcm().encode(),
 			// We cannot push an undecodable XCM here since it would break the decode stream.
 			// This is expected and the whole reason to introduce `MaybeDoubleEncodedVersionedXcm`
 			// instead.
@@ -338,9 +331,12 @@ pub(crate) fn mk_page() -> Vec<u8> {
 	page
 }
 
-pub(crate) fn versioned_xcm(version: XcmVersion) -> VersionedXcm<()> {
-	let instr = Instruction::<()>::Trap(1);
-	VersionedXcm::from(Xcm::<()>(vec![instr; 3]))
-		.into_version(version)
-		.expect("Version conversion should work")
+pub(crate) fn v2_xcm() -> VersionedXcm<()> {
+	let instr = xcm::v2::Instruction::<()>::ClearOrigin;
+	VersionedXcm::V2(xcm::v2::Xcm::<()>(vec![instr; 3]))
+}
+
+pub(crate) fn v3_xcm() -> VersionedXcm<()> {
+	let instr = xcm::v3::Instruction::<()>::Trap(1);
+	VersionedXcm::V3(xcm::v3::Xcm::<()>(vec![instr; 3]))
 }

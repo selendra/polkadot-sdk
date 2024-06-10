@@ -27,6 +27,7 @@ use sp_consensus_babe::{
 	make_vrf_sign_data, AuthorityId, BabeAuthorityWeight, Randomness, Slot,
 };
 use sp_core::{
+	blake2_256,
 	crypto::{ByteArray, Wraps},
 	U256,
 };
@@ -59,7 +60,7 @@ pub(super) fn calculate_primary_threshold(
 	assert!(theta > 0.0, "authority with weight 0.");
 
 	// NOTE: in the equation `p = 1 - (1 - c)^theta` the value of `p` is always
-	// capped by `c`. For all practical purposes `c` should always be set to a
+	// capped by `c`. For all pratical purposes `c` should always be set to a
 	// value < 0.5, as such in the computations below we should never be near
 	// edge cases like `0.999999`.
 
@@ -108,7 +109,7 @@ pub(super) fn secondary_slot_author(
 		return None
 	}
 
-	let rand = U256::from((randomness, slot).using_encoded(sp_crypto_hashing::blake2_256));
+	let rand = U256::from((randomness, slot).using_encoded(blake2_256));
 
 	let authorities_len = U256::from(authorities.len());
 	let idx = rand % authorities_len;

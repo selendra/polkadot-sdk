@@ -22,12 +22,6 @@ use std::{borrow::Cow, str::FromStr};
 /// Collects all supported Coretime configurations.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum CoretimeRuntimeType {
-	Kusama,
-	KusamaLocal,
-
-	Polkadot,
-	PolkadotLocal,
-
 	// Live
 	Rococo,
 	// Local
@@ -35,8 +29,6 @@ pub enum CoretimeRuntimeType {
 	// Benchmarks
 	RococoDevelopment,
 
-	// Live
-	Westend,
 	// Local
 	WestendLocal,
 	// Benchmarks
@@ -48,14 +40,9 @@ impl FromStr for CoretimeRuntimeType {
 
 	fn from_str(value: &str) -> Result<Self, Self::Err> {
 		match value {
-			kusama::CORETIME_KUSAMA => Ok(CoretimeRuntimeType::Kusama),
-			kusama::CORETIME_KUSAMA_LOCAL => Ok(CoretimeRuntimeType::KusamaLocal),
-			polkadot::CORETIME_POLKADOT => Ok(CoretimeRuntimeType::Polkadot),
-			polkadot::CORETIME_POLKADOT_LOCAL => Ok(CoretimeRuntimeType::PolkadotLocal),
 			rococo::CORETIME_ROCOCO => Ok(CoretimeRuntimeType::Rococo),
 			rococo::CORETIME_ROCOCO_LOCAL => Ok(CoretimeRuntimeType::RococoLocal),
 			rococo::CORETIME_ROCOCO_DEVELOPMENT => Ok(CoretimeRuntimeType::RococoDevelopment),
-			westend::CORETIME_WESTEND => Ok(CoretimeRuntimeType::Westend),
 			westend::CORETIME_WESTEND_LOCAL => Ok(CoretimeRuntimeType::WestendLocal),
 			westend::CORETIME_WESTEND_DEVELOPMENT => Ok(CoretimeRuntimeType::WestendDevelopment),
 			_ => Err(format!("Value '{}' is not configured yet", value)),
@@ -66,14 +53,9 @@ impl FromStr for CoretimeRuntimeType {
 impl From<CoretimeRuntimeType> for &str {
 	fn from(runtime_type: CoretimeRuntimeType) -> Self {
 		match runtime_type {
-			CoretimeRuntimeType::Kusama => kusama::CORETIME_KUSAMA,
-			CoretimeRuntimeType::KusamaLocal => kusama::CORETIME_KUSAMA_LOCAL,
-			CoretimeRuntimeType::Polkadot => polkadot::CORETIME_POLKADOT,
-			CoretimeRuntimeType::PolkadotLocal => polkadot::CORETIME_POLKADOT_LOCAL,
 			CoretimeRuntimeType::Rococo => rococo::CORETIME_ROCOCO,
 			CoretimeRuntimeType::RococoLocal => rococo::CORETIME_ROCOCO_LOCAL,
 			CoretimeRuntimeType::RococoDevelopment => rococo::CORETIME_ROCOCO_DEVELOPMENT,
-			CoretimeRuntimeType::Westend => westend::CORETIME_WESTEND,
 			CoretimeRuntimeType::WestendLocal => westend::CORETIME_WESTEND_LOCAL,
 			CoretimeRuntimeType::WestendDevelopment => westend::CORETIME_WESTEND_DEVELOPMENT,
 		}
@@ -83,14 +65,9 @@ impl From<CoretimeRuntimeType> for &str {
 impl From<CoretimeRuntimeType> for ChainType {
 	fn from(runtime_type: CoretimeRuntimeType) -> Self {
 		match runtime_type {
-			CoretimeRuntimeType::Kusama |
-			CoretimeRuntimeType::Polkadot |
-			CoretimeRuntimeType::Rococo |
-			CoretimeRuntimeType::Westend => ChainType::Live,
-			CoretimeRuntimeType::KusamaLocal |
-			CoretimeRuntimeType::PolkadotLocal |
-			CoretimeRuntimeType::RococoLocal |
-			CoretimeRuntimeType::WestendLocal => ChainType::Local,
+			CoretimeRuntimeType::Rococo => ChainType::Live,
+			CoretimeRuntimeType::RococoLocal | CoretimeRuntimeType::WestendLocal =>
+				ChainType::Local,
 			CoretimeRuntimeType::RococoDevelopment | CoretimeRuntimeType::WestendDevelopment =>
 				ChainType::Development,
 		}
@@ -104,29 +81,17 @@ impl CoretimeRuntimeType {
 
 	pub fn load_config(&self) -> Result<Box<dyn ChainSpec>, String> {
 		match self {
-			CoretimeRuntimeType::Kusama => Ok(Box::new(GenericChainSpec::from_json_bytes(
-				&include_bytes!("../../chain-specs/coretime-kusama.json")[..],
-			)?)),
-			CoretimeRuntimeType::Polkadot =>
-				todo!("Generate chain-spec: ../../chain-specs/coretime-polkadot.json"),
 			CoretimeRuntimeType::Rococo => Ok(Box::new(GenericChainSpec::from_json_bytes(
-				&include_bytes!("../../chain-specs/coretime-rococo.json")[..],
+				&include_bytes!("../../../parachains/chain-specs/coretime-rococo.json")[..],
 			)?)),
 			CoretimeRuntimeType::RococoLocal =>
 				Ok(Box::new(rococo::local_config(*self, "rococo-local"))),
 			CoretimeRuntimeType::RococoDevelopment =>
 				Ok(Box::new(rococo::local_config(*self, "rococo-dev"))),
-			CoretimeRuntimeType::Westend => Ok(Box::new(GenericChainSpec::from_json_bytes(
-				&include_bytes!("../../../parachains/chain-specs/coretime-westend.json")[..],
-			)?)),
 			CoretimeRuntimeType::WestendLocal =>
 				Ok(Box::new(westend::local_config(*self, "westend-local"))),
 			CoretimeRuntimeType::WestendDevelopment =>
 				Ok(Box::new(westend::local_config(*self, "westend-dev"))),
-			other => Err(std::format!(
-				"No default config present for {:?}, you should provide a chain-spec as json file!",
-				other
-			)),
 		}
 	}
 }
@@ -155,7 +120,7 @@ pub mod rococo {
 	pub(crate) const CORETIME_ROCOCO: &str = "coretime-rococo";
 	pub(crate) const CORETIME_ROCOCO_LOCAL: &str = "coretime-rococo-local";
 	pub(crate) const CORETIME_ROCOCO_DEVELOPMENT: &str = "coretime-rococo-dev";
-	const CORETIME_ROCOCO_ED: Balance = coretime_rococo_runtime::ExistentialDeposit::get();
+	const CORETIME_ROCOCO_ED: Balance = parachains_common::rococo::currency::EXISTENTIAL_DEPOSIT;
 
 	pub fn local_config(runtime_type: CoretimeRuntimeType, relay_chain: &str) -> GenericChainSpec {
 		// Rococo defaults
@@ -248,10 +213,9 @@ pub mod westend {
 	use parachains_common::{AccountId, AuraId, Balance};
 	use sp_core::sr25519;
 
-	pub(crate) const CORETIME_WESTEND: &str = "coretime-westend";
 	pub(crate) const CORETIME_WESTEND_LOCAL: &str = "coretime-westend-local";
 	pub(crate) const CORETIME_WESTEND_DEVELOPMENT: &str = "coretime-westend-dev";
-	const CORETIME_WESTEND_ED: Balance = coretime_westend_runtime::ExistentialDeposit::get();
+	const CORETIME_WESTEND_ED: Balance = parachains_common::westend::currency::EXISTENTIAL_DEPOSIT;
 
 	pub fn local_config(runtime_type: CoretimeRuntimeType, relay_chain: &str) -> GenericChainSpec {
 		// westend defaults
@@ -323,14 +287,4 @@ pub mod westend {
 			}
 		})
 	}
-}
-
-pub mod kusama {
-	pub(crate) const CORETIME_KUSAMA: &str = "coretime-kusama";
-	pub(crate) const CORETIME_KUSAMA_LOCAL: &str = "coretime-kusama-local";
-}
-
-pub mod polkadot {
-	pub(crate) const CORETIME_POLKADOT: &str = "coretime-polkadot";
-	pub(crate) const CORETIME_POLKADOT_LOCAL: &str = "coretime-polkadot-local";
 }

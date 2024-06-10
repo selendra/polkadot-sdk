@@ -14,10 +14,10 @@
 // limitations under the License.
 
 // Substrate
-use sc_consensus_grandpa::AuthorityId as GrandpaId;
+use beefy_primitives::ecdsa_crypto::AuthorityId as BeefyId;
+use grandpa::AuthorityId as GrandpaId;
 use sp_authority_discovery::AuthorityId as AuthorityDiscoveryId;
 use sp_consensus_babe::AuthorityId as BabeId;
-use sp_consensus_beefy::ecdsa_crypto::AuthorityId as BeefyId;
 use sp_core::{sr25519, storage::Storage};
 
 // Polkadot
@@ -25,7 +25,8 @@ use polkadot_primitives::{AssignmentId, ValidatorId};
 
 // Cumulus
 use emulated_integration_tests_common::{
-	accounts, build_genesis_storage, get_account_id_from_seed, get_host_config, validators,
+	accounts, build_genesis_storage, get_account_id_from_seed, get_from_seed, get_host_config,
+	validators,
 };
 use parachains_common::Balance;
 use rococo_runtime_constants::currency::UNITS as ROC;
@@ -70,7 +71,7 @@ pub fn genesis() -> Storage {
 							x.4.clone(),
 							x.5.clone(),
 							x.6.clone(),
-							x.7.clone(),
+							get_from_seed::<BeefyId>("Alice"),
 						),
 					)
 				})
@@ -78,7 +79,7 @@ pub fn genesis() -> Storage {
 		},
 		babe: rococo_runtime::BabeConfig {
 			authorities: Default::default(),
-			epoch_config: rococo_runtime::BABE_GENESIS_EPOCH_CONFIG,
+			epoch_config: Some(rococo_runtime::BABE_GENESIS_EPOCH_CONFIG),
 			..Default::default()
 		},
 		sudo: rococo_runtime::SudoConfig {

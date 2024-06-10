@@ -117,15 +117,6 @@ impl RelayChainInterface for DummyRelayChainInterface {
 		}))
 	}
 
-	async fn validation_code_hash(
-		&self,
-		_: PHash,
-		_: ParaId,
-		_: OccupiedCoreAssumption,
-	) -> RelayChainResult<Option<ValidationCodeHash>> {
-		unimplemented!("Not needed for test")
-	}
-
 	async fn candidate_pending_availability(
 		&self,
 		_: PHash,
@@ -144,7 +135,7 @@ impl RelayChainInterface for DummyRelayChainInterface {
 					persisted_validation_data_hash: PHash::random(),
 					pov_hash: PHash::random(),
 					erasure_root: PHash::random(),
-					signature: sp_core::sr25519::Signature::default().into(),
+					signature: sp_core::sr25519::Signature([0u8; 64]).into(),
 					validation_code_hash: ValidationCodeHash::from(PHash::random()),
 				},
 				commitments: CandidateCommitments {
@@ -325,7 +316,7 @@ async fn make_gossip_message_and_header(
 			persisted_validation_data_hash: PHash::random(),
 			pov_hash: PHash::random(),
 			erasure_root: PHash::random(),
-			signature: sp_core::sr25519::Signature::default().into(),
+			signature: sp_core::sr25519::Signature([0u8; 64]).into(),
 			para_head: polkadot_parachain_primitives::primitives::HeadData(header.encode()).hash(),
 			validation_code_hash: ValidationCodeHash::from(PHash::random()),
 		},
@@ -516,7 +507,7 @@ async fn check_statement_seconded() {
 				persisted_validation_data_hash: PHash::random(),
 				pov_hash: PHash::random(),
 				erasure_root: PHash::random(),
-				signature: sp_core::sr25519::Signature::default().into(),
+				signature: sp_core::sr25519::Signature([0u8; 64]).into(),
 				validation_code_hash: ValidationCodeHash::from(PHash::random()),
 			},
 		},

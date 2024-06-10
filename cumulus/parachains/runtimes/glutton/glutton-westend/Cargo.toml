@@ -1,6 +1,6 @@
 [package]
 name = "glutton-westend-runtime"
-version = "3.0.0"
+version = "1.0.0"
 authors.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
@@ -10,8 +10,8 @@ description = "Glutton parachain runtime."
 workspace = true
 
 [dependencies]
-codec = { package = "parity-scale-codec", version = "3.6.12", default-features = false, features = ["derive"] }
-scale-info = { version = "2.11.1", default-features = false, features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive"] }
+scale-info = { version = "2.10.0", default-features = false, features = ["derive"] }
 
 # Substrate
 frame-benchmarking = { path = "../../../../../substrate/frame/benchmarking", default-features = false, optional = true }
@@ -22,8 +22,8 @@ frame-system-rpc-runtime-api = { path = "../../../../../substrate/frame/system/r
 frame-system-benchmarking = { path = "../../../../../substrate/frame/system/benchmarking", default-features = false, optional = true }
 frame-try-runtime = { path = "../../../../../substrate/frame/try-runtime", default-features = false, optional = true }
 pallet-aura = { path = "../../../../../substrate/frame/aura", default-features = false }
-pallet-glutton = { path = "../../../../../substrate/frame/glutton", default-features = false }
-pallet-sudo = { path = "../../../../../substrate/frame/sudo", default-features = false }
+pallet-glutton = { path = "../../../../../substrate/frame/glutton", default-features = false, optional = true }
+pallet-sudo = { path = "../../../../../substrate/frame/sudo", default-features = false, optional = true }
 pallet-timestamp = { path = "../../../../../substrate/frame/timestamp", default-features = false }
 sp-api = { path = "../../../../../substrate/primitives/api", default-features = false }
 sp-block-builder = { path = "../../../../../substrate/primitives/block-builder", default-features = false }
@@ -47,14 +47,13 @@ xcm-executor = { package = "staging-xcm-executor", path = "../../../../../polkad
 
 # Cumulus
 cumulus-pallet-aura-ext = { path = "../../../../pallets/aura-ext", default-features = false }
-cumulus-pallet-parachain-system = { path = "../../../../pallets/parachain-system", default-features = false }
+cumulus-pallet-parachain-system = { path = "../../../../pallets/parachain-system", default-features = false, features = ["parameterized-consensus-hook"] }
 cumulus-pallet-xcm = { path = "../../../../pallets/xcm", default-features = false }
 cumulus-primitives-aura = { path = "../../../../primitives/aura", default-features = false }
 cumulus-primitives-core = { path = "../../../../primitives/core", default-features = false }
 cumulus-primitives-timestamp = { path = "../../../../primitives/timestamp", default-features = false }
 parachain-info = { package = "staging-parachain-info", path = "../../../pallets/parachain-info", default-features = false }
 parachains-common = { path = "../../../common", default-features = false }
-testnet-parachains-constants = { path = "../../constants", default-features = false, features = ["westend"] }
 
 [build-dependencies]
 substrate-wasm-builder = { path = "../../../../../substrate/utils/wasm-builder" }
@@ -113,7 +112,6 @@ std = [
 	"sp-storage/std",
 	"sp-transaction-pool/std",
 	"sp-version/std",
-	"testnet-parachains-constants/std",
 	"xcm-builder/std",
 	"xcm-executor/std",
 	"xcm/std",
@@ -135,7 +133,9 @@ try-runtime = [
 	"sp-runtime/try-runtime",
 ]
 
+experimental = ["pallet-aura/experimental"]
+
 # A feature that should be enabled when the runtime should be built for on-chain
 # deployment. This will disable stuff that shouldn't be part of the on-chain wasm
-# to make it smaller, like logging for example.
+# to make it smaller like logging for example.
 on-chain-release-build = ["sp-api/disable-logging"]

@@ -21,20 +21,45 @@
 
 use codec::Encode;
 use frame_support::derive_impl;
-use sp_runtime::BuildStorage;
+use sp_runtime::{traits::IdentityLookup, BuildStorage};
+
+type AccountId = u64;
+type Nonce = u32;
 
 type Block = frame_system::mocking::MockBlock<Test>;
 
 frame_support::construct_runtime!(
 	pub enum Test
 	{
-		System: frame_system,
+		System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
 	}
 );
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
+	type BaseCallFilter = frame_support::traits::Everything;
+	type BlockWeights = ();
+	type BlockLength = ();
+	type DbWeight = ();
+	type RuntimeOrigin = RuntimeOrigin;
+	type Nonce = Nonce;
+	type RuntimeCall = RuntimeCall;
+	type Hash = sp_core::H256;
+	type Hashing = ::sp_runtime::traits::BlakeTwo256;
+	type AccountId = AccountId;
+	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ();
+	type Version = ();
+	type PalletInfo = PalletInfo;
+	type AccountData = ();
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = frame_support::traits::ConstU32<16>;
 }
 
 impl crate::Config for Test {}

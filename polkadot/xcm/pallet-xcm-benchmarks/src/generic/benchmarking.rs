@@ -19,9 +19,9 @@ use crate::{account_and_location, new_executor, EnsureDelivery, XcmCallOf};
 use codec::Encode;
 use frame_benchmarking::{benchmarks, BenchmarkError};
 use frame_support::{dispatch::GetDispatchInfo, traits::fungible::Inspect};
-use sp_std::{prelude::*, vec};
+use sp_std::vec;
 use xcm::{
-	latest::{prelude::*, MaxDispatchErrorLen, MaybeErrorCode, Weight, MAX_ITEMS_IN_ASSETS},
+	latest::{prelude::*, MaxDispatchErrorLen, MaybeErrorCode, Weight},
 	DoubleEncoded,
 };
 use xcm_executor::{
@@ -32,6 +32,7 @@ use xcm_executor::{
 benchmarks! {
 	report_holding {
 		let (sender_account, sender_location) = account_and_location::<T>(1);
+		let holding = T::worst_case_holding(0);
 		let destination = T::valid_destination().map_err(|_| BenchmarkError::Skip)?;
 
 		let (expected_fees_mode, expected_assets_in_holding) = T::DeliveryHelper::ensure_successful_delivery(
@@ -41,21 +42,13 @@ benchmarks! {
 		);
 		let sender_account_balance_before = T::TransactAsset::balance(&sender_account);
 
-		// generate holding and add possible required fees
-		let holding = if let Some(expected_assets_in_holding) = expected_assets_in_holding {
-			let mut holding = T::worst_case_holding(expected_assets_in_holding.len() as u32);
-			for a in expected_assets_in_holding.into_inner() {
-				holding.push(a);
-			}
-			holding
-		} else {
-			T::worst_case_holding(0)
-		};
-
 		let mut executor = new_executor::<T>(sender_location);
 		executor.set_holding(holding.clone().into());
 		if let Some(expected_fees_mode) = expected_fees_mode {
 			executor.set_fees_mode(expected_fees_mode);
+		}
+		if let Some(expected_assets_in_holding) = expected_assets_in_holding {
+			executor.set_holding(expected_assets_in_holding.into());
 		}
 
 		let instruction = Instruction::<XcmCallOf<T>>::ReportHolding {
@@ -64,8 +57,8 @@ benchmarks! {
 				query_id: Default::default(),
 				max_weight: Weight::MAX,
 			},
-			// Worst case is looking through all holdings for every asset explicitly - respecting the limit `MAX_ITEMS_IN_ASSETS`.
-			assets: Definite(holding.into_inner().into_iter().take(MAX_ITEMS_IN_ASSETS).collect::<Vec<_>>().into()),
+			// Worst case is looking through all holdings for every asset explicitly.
+			assets: Definite(holding),
 		};
 
 		let xcm = Xcm(vec![instruction]);
@@ -84,7 +77,7 @@ benchmarks! {
 		let mut executor = new_executor::<T>(Default::default());
 		executor.set_holding(holding);
 
-		let fee_asset = AssetId(Here.into());
+		let fee_asset = Concrete(Here.into());
 
 		let instruction = Instruction::<XcmCallOf<T>>::BuyExecution {
 			fees: (fee_asset, 100_000_000u128).into(), // should be something inside of holding
@@ -102,7 +95,7 @@ benchmarks! {
 		let mut executor = new_executor::<T>(Default::default());
 		let (query_id, response) = T::worst_case_response();
 		let max_weight = Weight::MAX;
-		let querier: Option<Location> = Some(Here.into());
+		let querier: Option<MultiLocation> = Some(Here.into());
 		let instruction = Instruction::QueryResponse { query_id, response, max_weight, querier };
 		let xcm = Xcm(vec![instruction]);
 	}: {
@@ -132,15 +125,11 @@ benchmarks! {
 	}
 
 	refund_surplus {
+		let holding = T::worst_case_holding(0).into();
 		let mut executor = new_executor::<T>(Default::default());
-		let holding_assets = T::worst_case_holding(1);
-		// We can already buy execution since we'll load the holding register manually
-		let asset_for_fees = T::fee_asset().unwrap();
-		let previous_xcm = Xcm(vec![BuyExecution { fees: asset_for_fees, weight_limit: Limited(Weight::from_parts(1337, 1337)) }]);
-		executor.set_holding(holding_assets.into());
+		executor.set_holding(holding);
 		executor.set_total_surplus(Weight::from_parts(1337, 1337));
 		executor.set_total_refunded(Weight::zero());
-		executor.bench_process(previous_xcm).expect("Holding has been loaded, so we can buy execution here");
 
 		let instruction = Instruction::<XcmCallOf<T>>::RefundSurplus;
 		let xcm = Xcm(vec![instruction]);
@@ -185,15 +174,15 @@ benchmarks! {
 
 	descend_origin {
 		let mut executor = new_executor::<T>(Default::default());
-		let who = Junctions::from([OnlyChild, OnlyChild]);
-		let instruction = Instruction::DescendOrigin(who.clone());
+		let who = X2(OnlyChild, OnlyChild);
+		let instruction = Instruction::DescendOrigin(who);
 		let xcm = Xcm(vec![instruction]);
 	} : {
 		executor.bench_process(xcm)?;
 	} verify {
 		assert_eq!(
 			executor.origin(),
-			&Some(Location {
+			&Some(MultiLocation {
 				parents: 0,
 				interior: who,
 			}),
@@ -253,7 +242,7 @@ benchmarks! {
 			&origin,
 			assets.clone().into(),
 			&XcmContext {
-				origin: Some(origin.clone()),
+				origin: Some(origin),
 				message_id: [0; 32],
 				topic: None,
 			},
@@ -290,7 +279,7 @@ benchmarks! {
 		let origin = T::subscribe_origin()?;
 		let query_id = Default::default();
 		let max_response_weight = Default::default();
-		let mut executor = new_executor::<T>(origin.clone());
+		let mut executor = new_executor::<T>(origin);
 		let instruction = Instruction::SubscribeVersion { query_id, max_response_weight };
 		let xcm = Xcm(vec![instruction]);
 	} : {
@@ -310,14 +299,14 @@ benchmarks! {
 			query_id,
 			max_response_weight,
 			&XcmContext {
-				origin: Some(origin.clone()),
+				origin: Some(origin),
 				message_id: [0; 32],
 				topic: None,
 			},
 		).map_err(|_| "Could not start subscription")?;
 		assert!(<T::XcmConfig as xcm_executor::Config>::SubscriptionService::is_subscribed(&origin));
 
-		let mut executor = new_executor::<T>(origin.clone());
+		let mut executor = new_executor::<T>(origin);
 		let instruction = Instruction::UnsubscribeVersion;
 		let xcm = Xcm(vec![instruction]);
 	} : {
@@ -556,7 +545,7 @@ benchmarks! {
 	} verify {
 		use frame_support::traits::Get;
 		let universal_location = <T::XcmConfig as xcm_executor::Config>::UniversalLocation::get();
-		assert_eq!(executor.origin(), &Some(Junctions::from([alias]).relative_to(&universal_location)));
+		assert_eq!(executor.origin(), &Some(X1(alias).relative_to(&universal_location)));
 	}
 
 	export_message {
@@ -572,8 +561,8 @@ benchmarks! {
 
 		let (expected_fees_mode, expected_assets_in_holding) = T::DeliveryHelper::ensure_successful_delivery(
 			&origin,
-			&destination.clone().into(),
-			FeeReason::Export { network, destination: destination.clone() },
+			&destination.into(),
+			FeeReason::Export { network, destination },
 		);
 		let sender_account = T::AccountIdConverter::convert_location(&origin).unwrap();
 		let sender_account_balance_before = T::TransactAsset::balance(&sender_account);
@@ -586,7 +575,7 @@ benchmarks! {
 			executor.set_holding(expected_assets_in_holding.into());
 		}
 		let xcm = Xcm(vec![ExportMessage {
-			network, destination: destination.clone(), xcm: inner_xcm,
+			network, destination, xcm: inner_xcm,
 		}]);
 	}: {
 		executor.bench_process(xcm)?;
@@ -619,18 +608,13 @@ benchmarks! {
 		let sender_account = T::AccountIdConverter::convert_location(&owner).unwrap();
 		let sender_account_balance_before = T::TransactAsset::balance(&sender_account);
 
-		// generate holding and add possible required fees
-		let mut holding: Assets = asset.clone().into();
-		if let Some(expected_assets_in_holding) = expected_assets_in_holding {
-			for a in expected_assets_in_holding.into_inner() {
-				holding.push(a);
-			}
-		};
-
 		let mut executor = new_executor::<T>(owner);
-		executor.set_holding(holding.into());
+		executor.set_holding(asset.clone().into());
 		if let Some(expected_fees_mode) = expected_fees_mode {
 			executor.set_fees_mode(expected_fees_mode);
+		}
+		if let Some(expected_assets_in_holding) = expected_assets_in_holding {
+			executor.set_holding(expected_assets_in_holding.into());
 		}
 
 		let instruction = Instruction::LockAsset { asset, unlocker };
@@ -648,13 +632,13 @@ benchmarks! {
 
 		let (unlocker, owner, asset) = T::unlockable_asset()?;
 
-		let mut executor = new_executor::<T>(unlocker.clone());
+		let mut executor = new_executor::<T>(unlocker);
 
 		// We first place the asset in lock first...
 		<T::XcmConfig as xcm_executor::Config>::AssetLocker::prepare_lock(
 			unlocker,
 			asset.clone(),
-			owner.clone(),
+			owner,
 		)
 		.map_err(|_| BenchmarkError::Skip)?
 		.enact()
@@ -674,13 +658,13 @@ benchmarks! {
 
 		let (unlocker, owner, asset) = T::unlockable_asset()?;
 
-		let mut executor = new_executor::<T>(unlocker.clone());
+		let mut executor = new_executor::<T>(unlocker);
 
 		// We first place the asset in lock first...
 		<T::XcmConfig as xcm_executor::Config>::AssetLocker::prepare_lock(
 			unlocker,
 			asset.clone(),
-			owner.clone(),
+			owner,
 		)
 		.map_err(|_| BenchmarkError::Skip)?
 		.enact()
@@ -702,9 +686,9 @@ benchmarks! {
 
 		// We first place the asset in lock first...
 		<T::XcmConfig as xcm_executor::Config>::AssetLocker::prepare_lock(
-			locker.clone(),
+			locker,
 			asset.clone(),
-			owner.clone(),
+			owner,
 		)
 		.map_err(|_| BenchmarkError::Skip)?
 		.enact()
@@ -755,7 +739,7 @@ benchmarks! {
 
 		let mut executor = new_executor::<T>(origin);
 
-		let instruction = Instruction::AliasOrigin(target.clone());
+		let instruction = Instruction::AliasOrigin(target);
 		let xcm = Xcm(vec![instruction]);
 	}: {
 		executor.bench_process(xcm)?;

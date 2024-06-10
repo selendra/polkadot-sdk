@@ -1,6 +1,6 @@
 [package]
 name = "polkadot-node-core-prospective-parachains"
-version = "6.0.0"
+version = "1.0.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,11 +10,11 @@ description = "The Prospective Parachains subsystem. Tracks and handles prospect
 workspace = true
 
 [dependencies]
-futures = "0.3.30"
+futures = "0.3.19"
 gum = { package = "tracing-gum", path = "../../gum" }
-codec = { package = "parity-scale-codec", version = "3.6.12" }
-thiserror = { workspace = true }
-fatality = "0.1.1"
+parity-scale-codec = "3.6.4"
+thiserror = "1.0.48"
+fatality = "0.0.6"
 bitvec = "1"
 
 polkadot-primitives = { path = "../../../primitives" }

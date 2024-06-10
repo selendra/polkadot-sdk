@@ -26,7 +26,10 @@ pub mod pallet {
 	use frame_benchmarking::BenchmarkError;
 	use frame_support::{dispatch::GetDispatchInfo, pallet_prelude::Encode};
 	use sp_runtime::traits::Dispatchable;
-	use xcm::latest::{Asset, Assets, InteriorLocation, Junction, Location, NetworkId, Response};
+	use xcm::latest::{
+		InteriorMultiLocation, Junction, MultiAsset, MultiAssets, MultiLocation, NetworkId,
+		Response,
+	};
 
 	#[pallet::config]
 	pub trait Config<I: 'static = ()>: frame_system::Config + crate::Config {
@@ -50,48 +53,44 @@ pub mod pallet {
 		/// from, whereas the second element represents the assets that are being exchanged to.
 		///
 		/// If set to `Err`, benchmarks which rely on an `exchange_asset` will be skipped.
-		fn worst_case_asset_exchange() -> Result<(Assets, Assets), BenchmarkError>;
+		fn worst_case_asset_exchange() -> Result<(MultiAssets, MultiAssets), BenchmarkError>;
 
-		/// A `(Location, Junction)` that is one of the `UniversalAliases` configured by the
+		/// A `(MultiLocation, Junction)` that is one of the `UniversalAliases` configured by the
 		/// XCM executor.
 		///
 		/// If set to `Err`, benchmarks which rely on a universal alias will be skipped.
-		fn universal_alias() -> Result<(Location, Junction), BenchmarkError>;
+		fn universal_alias() -> Result<(MultiLocation, Junction), BenchmarkError>;
 
-		/// The `Location` and `RuntimeCall` used for successful transaction XCMs.
+		/// The `MultiLocation` and `RuntimeCall` used for successful transaction XCMs.
 		///
 		/// If set to `Err`, benchmarks which rely on a `transact_origin_and_runtime_call` will be
 		/// skipped.
 		fn transact_origin_and_runtime_call(
-		) -> Result<(Location, <Self as crate::generic::Config<I>>::RuntimeCall), BenchmarkError>;
+		) -> Result<(MultiLocation, <Self as crate::generic::Config<I>>::RuntimeCall), BenchmarkError>;
 
-		/// A valid `Location` we can successfully subscribe to.
+		/// A valid `MultiLocation` we can successfully subscribe to.
 		///
 		/// If set to `Err`, benchmarks which rely on a `subscribe_origin` will be skipped.
-		fn subscribe_origin() -> Result<Location, BenchmarkError>;
+		fn subscribe_origin() -> Result<MultiLocation, BenchmarkError>;
 
 		/// Return an origin, ticket, and assets that can be trapped and claimed.
-		fn claimable_asset() -> Result<(Location, Location, Assets), BenchmarkError>;
-
-		/// Asset used to pay for fees. Used to buy weight in benchmarks, for example in
-		/// `refund_surplus`.
-		fn fee_asset() -> Result<Asset, BenchmarkError>;
+		fn claimable_asset() -> Result<(MultiLocation, MultiLocation, MultiAssets), BenchmarkError>;
 
 		/// Return an unlocker, owner and assets that can be locked and unlocked.
-		fn unlockable_asset() -> Result<(Location, Location, Asset), BenchmarkError>;
+		fn unlockable_asset() -> Result<(MultiLocation, MultiLocation, MultiAsset), BenchmarkError>;
 
-		/// A `(Location, NetworkId, InteriorLocation)` we can successfully export message
+		/// A `(MultiLocation, NetworkId, InteriorMultiLocation)` we can successfully export message
 		/// to.
 		///
 		/// If set to `Err`, benchmarks which rely on `export_message` will be skipped.
 		fn export_message_origin_and_destination(
-		) -> Result<(Location, NetworkId, InteriorLocation), BenchmarkError>;
+		) -> Result<(MultiLocation, NetworkId, InteriorMultiLocation), BenchmarkError>;
 
-		/// A `(Location, Location)` that is one of the `Aliasers` configured by the XCM
+		/// A `(MultiLocation, MultiLocation)` that is one of the `Aliasers` configured by the XCM
 		/// executor.
 		///
 		/// If set to `Err`, benchmarks which rely on a universal alias will be skipped.
-		fn alias_origin() -> Result<(Location, Location), BenchmarkError>;
+		fn alias_origin() -> Result<(MultiLocation, MultiLocation), BenchmarkError>;
 
 		/// Returns a valid pallet info for `ExpectPallet` or `QueryPallet` benchmark.
 		///

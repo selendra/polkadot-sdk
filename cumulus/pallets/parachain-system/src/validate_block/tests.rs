@@ -21,15 +21,13 @@ use cumulus_test_client::{
 	runtime::{
 		self as test_runtime, Block, Hash, Header, TestPalletCall, UncheckedExtrinsic, WASM_BINARY,
 	},
-	seal_block, transfer, BlockData, BlockOrigin, BuildParachainBlockData, Client,
-	ClientBlockImportExt, DefaultTestClientBuilderExt, HeadData, InitBlockBuilder,
-	Sr25519Keyring::{Alice, Bob, Charlie},
-	TestClientBuilder, TestClientBuilderExt, ValidationParams,
+	transfer, BlockData, BlockOrigin, BuildParachainBlockData, Client, ClientBlockImportExt,
+	DefaultTestClientBuilderExt, HeadData, InitBlockBuilder, TestClientBuilder,
+	TestClientBuilderExt, ValidationParams,
 };
 use cumulus_test_relay_sproof_builder::RelayStateSproofBuilder;
-use sp_consensus_slots::Slot;
+use sp_keyring::AccountKeyring::*;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
-
 use std::{env, process::Command};
 
 use crate::validate_block::MemoryOptimizedValidationParams;
@@ -61,7 +59,7 @@ fn call_validate_block(
 }
 
 fn create_test_client() -> (Client, Header) {
-	let client = TestClientBuilder::new().enable_import_proof_recording().build();
+	let client = TestClientBuilder::new().build();
 
 	let genesis_header = client
 		.header(client.chain_info().genesis_hash)
@@ -75,7 +73,6 @@ fn create_test_client() -> (Client, Header) {
 struct TestBlockData {
 	block: ParachainBlockData<Block>,
 	validation_data: PersistedValidationData,
-	slot: Slot,
 }
 
 fn build_block_with_witness(
@@ -86,24 +83,21 @@ fn build_block_with_witness(
 ) -> TestBlockData {
 	sproof_builder.para_id = test_runtime::PARACHAIN_ID.into();
 	sproof_builder.included_para_head = Some(HeadData(parent_head.encode()));
-
-	let validation_data = PersistedValidationData {
+	let (relay_parent_storage_root, _) = sproof_builder.clone().into_state_root_and_proof();
+	let mut validation_data = PersistedValidationData {
 		relay_parent_number: 1,
 		parent_head: parent_head.encode().into(),
 		..Default::default()
 	};
+	let mut builder = client.init_block_builder(Some(validation_data.clone()), sproof_builder);
 
-	let cumulus_test_client::BlockBuilderAndSupportData {
-		mut block_builder,
-		persisted_validation_data,
-		slot,
-	} = client.init_block_builder(Some(validation_data), sproof_builder);
+	validation_data.relay_parent_storage_root = relay_parent_storage_root;
 
-	extra_extrinsics.into_iter().for_each(|e| block_builder.push(e).unwrap());
+	extra_extrinsics.into_iter().for_each(|e| builder.push(e).unwrap());
 
-	let block = block_builder.build_parachain_block(*parent_head.state_root());
+	let block = builder.build_parachain_block(*parent_head.state_root());
 
-	TestBlockData { block, validation_data: persisted_validation_data, slot }
+	TestBlockData { block, validation_data }
 }
 
 #[test]
@@ -111,11 +105,10 @@ fn validate_block_works() {
 	sp_tracing::try_init_simple();
 
 	let (client, parent_head) = create_test_client();
-	let TestBlockData { block, validation_data, slot } =
+	let TestBlockData { block, validation_data } =
 		build_block_with_witness(&client, Vec::new(), parent_head.clone(), Default::default());
-
-	let block = seal_block(block, slot, &client);
 	let header = block.header().clone();
+
 	let res_header =
 		call_validate_block(parent_head, block, validation_data.relay_parent_storage_root)
 			.expect("Calls `validate_block`");
@@ -133,13 +126,12 @@ fn validate_block_with_extra_extrinsics() {
 		transfer(&client, Charlie, Alice, 500),
 	];
 
-	let TestBlockData { block, validation_data, slot } = build_block_with_witness(
+	let TestBlockData { block, validation_data } = build_block_with_witness(
 		&client,
 		extra_extrinsics,
 		parent_head.clone(),
 		Default::default(),
 	);
-	let block = seal_block(block, slot, &client);
 	let header = block.header().clone();
 
 	let res_header =
@@ -167,7 +159,7 @@ fn validate_block_returns_custom_head_data() {
 		transfer(&client, Bob, Charlie, 100),
 	];
 
-	let TestBlockData { block, validation_data, slot } = build_block_with_witness(
+	let TestBlockData { block, validation_data } = build_block_with_witness(
 		&client,
 		extra_extrinsics,
 		parent_head.clone(),
@@ -176,7 +168,6 @@ fn validate_block_returns_custom_head_data() {
 	let header = block.header().clone();
 	assert_ne!(expected_header, header.encode());
 
-	let block = seal_block(block, slot, &client);
 	let res_header = call_validate_block_encoded_header(
 		parent_head,
 		block,
@@ -192,7 +183,7 @@ fn validate_block_invalid_parent_hash() {
 
 	if env::var("RUN_TEST").is_ok() {
 		let (client, parent_head) = create_test_client();
-		let TestBlockData { block, validation_data, .. } =
+		let TestBlockData { block, validation_data } =
 			build_block_with_witness(&client, Vec::new(), parent_head.clone(), Default::default());
 		let (mut header, extrinsics, witness) = block.deconstruct();
 		header.set_parent_hash(Hash::from_low_u64_be(1));
@@ -242,7 +233,7 @@ fn check_inherents_are_unsigned_and_before_all_other_extrinsics() {
 	if env::var("RUN_TEST").is_ok() {
 		let (client, parent_head) = create_test_client();
 
-		let TestBlockData { block, validation_data, .. } =
+		let TestBlockData { block, validation_data } =
 			build_block_with_witness(&client, Vec::new(), parent_head.clone(), Default::default());
 
 		let (header, mut extrinsics, proof) = block.deconstruct();
@@ -325,15 +316,15 @@ fn validate_block_works_with_child_tries() {
 
 	let parent_head = block.header().clone();
 
-	let TestBlockData { block, validation_data, slot } = build_block_with_witness(
+	let TestBlockData { block, validation_data } = build_block_with_witness(
 		&client,
 		vec![generate_extrinsic(&client, Alice, TestPalletCall::read_and_write_child_tries {})],
 		parent_head.clone(),
 		Default::default(),
 	);
 
-	let block = seal_block(block, slot, &client);
 	let header = block.header().clone();
+
 	let res_header =
 		call_validate_block(parent_head, block, validation_data.relay_parent_storage_root)
 			.expect("Calls `validate_block`");

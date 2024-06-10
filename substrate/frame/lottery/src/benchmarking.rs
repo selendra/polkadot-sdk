@@ -23,6 +23,7 @@ use super::*;
 
 use crate::Pallet as Lottery;
 use frame_benchmarking::{
+	impl_benchmark_test_suite,
 	v1::{account, whitelisted_caller, BenchmarkError},
 	v2::*,
 };

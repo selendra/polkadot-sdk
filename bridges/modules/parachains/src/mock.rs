@@ -16,7 +16,7 @@
 
 use bp_header_chain::ChainWithGrandpa;
 use bp_polkadot_core::parachains::ParaId;
-use bp_runtime::{Chain, ChainId, Parachain};
+use bp_runtime::{Chain, Parachain};
 use frame_support::{
 	construct_runtime, derive_impl, parameter_types, traits::ConstU32, weights::Weight,
 };
@@ -49,8 +49,6 @@ pub type BigParachainHeader = sp_runtime::generic::Header<u128, BlakeTwo256>;
 pub struct Parachain1;
 
 impl Chain for Parachain1 {
-	const ID: ChainId = *b"pch1";
-
 	type BlockNumber = u64;
 	type Hash = H256;
 	type Hasher = RegularParachainHasher;
@@ -70,14 +68,11 @@ impl Chain for Parachain1 {
 
 impl Parachain for Parachain1 {
 	const PARACHAIN_ID: u32 = 1;
-	const MAX_HEADER_SIZE: u32 = 1_024;
 }
 
 pub struct Parachain2;
 
 impl Chain for Parachain2 {
-	const ID: ChainId = *b"pch2";
-
 	type BlockNumber = u64;
 	type Hash = H256;
 	type Hasher = RegularParachainHasher;
@@ -97,14 +92,11 @@ impl Chain for Parachain2 {
 
 impl Parachain for Parachain2 {
 	const PARACHAIN_ID: u32 = 2;
-	const MAX_HEADER_SIZE: u32 = 1_024;
 }
 
 pub struct Parachain3;
 
 impl Chain for Parachain3 {
-	const ID: ChainId = *b"pch3";
-
 	type BlockNumber = u64;
 	type Hash = H256;
 	type Hasher = RegularParachainHasher;
@@ -124,15 +116,12 @@ impl Chain for Parachain3 {
 
 impl Parachain for Parachain3 {
 	const PARACHAIN_ID: u32 = 3;
-	const MAX_HEADER_SIZE: u32 = 1_024;
 }
 
 // this parachain is using u128 as block number and stored head data size exceeds limit
 pub struct BigParachain;
 
 impl Chain for BigParachain {
-	const ID: ChainId = *b"bpch";
-
 	type BlockNumber = u128;
 	type Hash = H256;
 	type Hasher = RegularParachainHasher;
@@ -152,7 +141,6 @@ impl Chain for BigParachain {
 
 impl Parachain for BigParachain {
 	const PARACHAIN_ID: u32 = 4;
-	const MAX_HEADER_SIZE: u32 = 2_048;
 }
 
 construct_runtime! {
@@ -165,21 +153,19 @@ construct_runtime! {
 	}
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for TestRuntime {
 	type Block = Block;
 }
 
 parameter_types! {
 	pub const HeadersToKeep: u32 = 5;
-	pub const FreeHeadersInterval: u32 = 15;
 }
 
 impl pallet_bridge_grandpa::Config<pallet_bridge_grandpa::Instance1> for TestRuntime {
 	type RuntimeEvent = RuntimeEvent;
 	type BridgedChain = TestBridgedChain;
-	type MaxFreeHeadersPerBlock = ConstU32<2>;
-	type FreeHeadersInterval = FreeHeadersInterval;
+	type MaxFreeMandatoryHeadersPerBlock = ConstU32<2>;
 	type HeadersToKeep = HeadersToKeep;
 	type WeightInfo = ();
 }
@@ -187,8 +173,7 @@ impl pallet_bridge_grandpa::Config<pallet_bridge_grandpa::Instance1> for TestRun
 impl pallet_bridge_grandpa::Config<pallet_bridge_grandpa::Instance2> for TestRuntime {
 	type RuntimeEvent = RuntimeEvent;
 	type BridgedChain = TestBridgedChain;
-	type MaxFreeHeadersPerBlock = ConstU32<2>;
-	type FreeHeadersInterval = FreeHeadersInterval;
+	type MaxFreeMandatoryHeadersPerBlock = ConstU32<2>;
 	type HeadersToKeep = HeadersToKeep;
 	type WeightInfo = ();
 }
@@ -244,8 +229,6 @@ impl pallet_bridge_parachains::benchmarking::Config<()> for TestRuntime {
 pub struct TestBridgedChain;
 
 impl Chain for TestBridgedChain {
-	const ID: ChainId = *b"tbch";
-
 	type BlockNumber = crate::RelayBlockNumber;
 	type Hash = crate::RelayBlockHash;
 	type Hasher = crate::RelayBlockHasher;
@@ -268,7 +251,7 @@ impl Chain for TestBridgedChain {
 impl ChainWithGrandpa for TestBridgedChain {
 	const WITH_CHAIN_GRANDPA_PALLET_NAME: &'static str = "";
 	const MAX_AUTHORITIES_COUNT: u32 = 16;
-	const REASONABLE_HEADERS_IN_JUSTIFICATION_ANCESTRY: u32 = 8;
+	const REASONABLE_HEADERS_IN_JUSTIFICATON_ANCESTRY: u32 = 8;
 	const MAX_MANDATORY_HEADER_SIZE: u32 = 256;
 	const AVERAGE_HEADER_SIZE: u32 = 64;
 }
@@ -277,8 +260,6 @@ impl ChainWithGrandpa for TestBridgedChain {
 pub struct OtherBridgedChain;
 
 impl Chain for OtherBridgedChain {
-	const ID: ChainId = *b"obch";
-
 	type BlockNumber = u64;
 	type Hash = crate::RelayBlockHash;
 	type Hasher = crate::RelayBlockHasher;
@@ -301,7 +282,7 @@ impl Chain for OtherBridgedChain {
 impl ChainWithGrandpa for OtherBridgedChain {
 	const WITH_CHAIN_GRANDPA_PALLET_NAME: &'static str = "";
 	const MAX_AUTHORITIES_COUNT: u32 = 16;
-	const REASONABLE_HEADERS_IN_JUSTIFICATION_ANCESTRY: u32 = 8;
+	const REASONABLE_HEADERS_IN_JUSTIFICATON_ANCESTRY: u32 = 8;
 	const MAX_MANDATORY_HEADER_SIZE: u32 = 256;
 	const AVERAGE_HEADER_SIZE: u32 = 64;
 }

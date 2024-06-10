@@ -18,7 +18,6 @@
 
 use clap::Parser;
 use sc_cli::SubstrateCli;
-use std::path::PathBuf;
 
 /// Sub-commands supported by the collator.
 #[derive(Debug, Parser)]
@@ -34,19 +33,11 @@ pub enum Subcommand {
 
 /// Command for exporting the genesis head data of the parachain
 #[derive(Debug, Parser)]
-pub struct ExportGenesisHeadCommand {
-	/// Output file name or stdout if unspecified.
-	#[arg()]
-	pub output: Option<PathBuf>,
-}
+pub struct ExportGenesisHeadCommand {}
 
 /// Command for exporting the genesis wasm file.
 #[derive(Debug, Parser)]
-pub struct ExportGenesisWasmCommand {
-	/// Output file name or stdout if unspecified.
-	#[arg()]
-	pub output: Option<PathBuf>,
-}
+pub struct ExportGenesisWasmCommand {}
 
 #[allow(missing_docs)]
 #[derive(Debug, Parser)]

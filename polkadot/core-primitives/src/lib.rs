@@ -20,7 +20,7 @@
 //!
 //! These core Polkadot types are used by the relay chain and the Parachains.
 
-use codec::{Decode, Encode};
+use parity_scale_codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use sp_runtime::{
 	generic,

@@ -16,10 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::LOG_TARGET;
+use libp2p::PeerId;
 use log::trace;
 use sc_network_common::sync::message;
-use sc_network_types::PeerId;
 use sp_runtime::traits::{Block as BlockT, NumberFor, One};
 use std::{
 	cmp,
@@ -88,10 +87,10 @@ impl<B: BlockT> BlockCollection<B> {
 
 		match self.blocks.get(&start) {
 			Some(&BlockRangeState::Downloading { .. }) => {
-				trace!(target: LOG_TARGET, "Inserting block data still marked as being downloaded: {}", start);
+				trace!(target: "sync", "Inserting block data still marked as being downloaded: {}", start);
 			},
 			Some(BlockRangeState::Complete(existing)) if existing.len() >= blocks.len() => {
-				trace!(target: LOG_TARGET, "Ignored block data already downloaded: {}", start);
+				trace!(target: "sync", "Ignored block data already downloaded: {}", start);
 				return
 			},
 			_ => (),
@@ -163,7 +162,7 @@ impl<B: BlockT> BlockCollection<B> {
 		};
 		// crop to peers best
 		if range.start > peer_best {
-			trace!(target: LOG_TARGET, "Out of range for peer {} ({} vs {})", who, range.start, peer_best);
+			trace!(target: "sync", "Out of range for peer {} ({} vs {})", who, range.start, peer_best);
 			return None
 		}
 		range.end = cmp::min(peer_best + One::one(), range.end);
@@ -174,7 +173,7 @@ impl<B: BlockT> BlockCollection<B> {
 			.next()
 			.map_or(false, |(n, _)| range.start > *n + max_ahead.into())
 		{
-			trace!(target: LOG_TARGET, "Too far ahead for peer {} ({})", who, range.start);
+			trace!(target: "sync", "Too far ahead for peer {} ({})", who, range.start);
 			return None
 		}
 
@@ -225,7 +224,7 @@ impl<B: BlockT> BlockCollection<B> {
 			};
 			*range_data = BlockRangeState::Queued { len };
 		}
-		trace!(target: LOG_TARGET, "{} blocks ready for import", ready.len());
+		trace!(target: "sync", "{} blocks ready for import", ready.len());
 		ready
 	}
 
@@ -236,7 +235,7 @@ impl<B: BlockT> BlockCollection<B> {
 				self.blocks.remove(&block_num);
 				block_num += One::one();
 			}
-			trace!(target: LOG_TARGET, "Cleared blocks from {:?} to {:?}", from, to);
+			trace!(target: "sync", "Cleared blocks from {:?} to {:?}", from, to);
 		}
 	}
 
@@ -262,8 +261,8 @@ impl<B: BlockT> BlockCollection<B> {
 #[cfg(test)]
 mod test {
 	use super::{BlockCollection, BlockData, BlockRangeState};
+	use libp2p::PeerId;
 	use sc_network_common::sync::message;
-	use sc_network_types::PeerId;
 	use sp_core::H256;
 	use sp_runtime::testing::{Block as RawBlock, ExtrinsicWrapper};
 

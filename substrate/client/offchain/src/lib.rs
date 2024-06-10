@@ -327,12 +327,12 @@ where
 mod tests {
 	use super::*;
 	use futures::executor::block_on;
+	use libp2p::{Multiaddr, PeerId};
 	use sc_block_builder::BlockBuilderBuilder;
 	use sc_client_api::Backend as _;
 	use sc_network::{
-		config::MultiaddrWithPeerId, types::ProtocolName, Multiaddr, ObservedRole, ReputationChange,
+		config::MultiaddrWithPeerId, types::ProtocolName, ObservedRole, ReputationChange,
 	};
-	use sc_network_types::PeerId;
 	use sc_transaction_pool::BasicPool;
 	use sc_transaction_pool_api::{InPoolTransaction, TransactionPool};
 	use sp_consensus::BlockOrigin;
@@ -361,7 +361,6 @@ mod tests {
 		}
 	}
 
-	#[async_trait::async_trait]
 	impl NetworkPeers for TestNetwork {
 		fn set_authorized_peers(&self, _peers: HashSet<PeerId>) {
 			unimplemented!();
@@ -433,10 +432,6 @@ mod tests {
 
 		fn peer_role(&self, _peer_id: PeerId, _handshake: Vec<u8>) -> Option<ObservedRole> {
 			None
-		}
-
-		async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
-			unimplemented!();
 		}
 	}
 

@@ -54,11 +54,9 @@ async function run(nodeName, networkInfo, _jsArgs) {
         unsub();
         return resolve();
       } else if (result.isError) {
-        // Probably happens because of: https://github.com/paritytech/polkadot-sdk/issues/1202.
-        console.log(`Transaction error`);
-        // We ignore the error because it is very likely misleading, because of the issue mentioned above.
+        console.log(`Transaction Error`);
         unsub();
-        return resolve();
+        return reject();
       }
     });
   });

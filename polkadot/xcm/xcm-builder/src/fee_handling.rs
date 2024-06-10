@@ -25,22 +25,27 @@ pub trait HandleFee {
 	/// fees.
 	///
 	/// Returns any part of the fee that wasn't consumed.
-	fn handle_fee(fee: Assets, context: Option<&XcmContext>, reason: FeeReason) -> Assets;
+	fn handle_fee(fee: MultiAssets, context: Option<&XcmContext>, reason: FeeReason)
+		-> MultiAssets;
 }
 
 // Default `HandleFee` implementation that just burns the fee.
 impl HandleFee for () {
-	fn handle_fee(_: Assets, _: Option<&XcmContext>, _: FeeReason) -> Assets {
-		Assets::new()
+	fn handle_fee(_: MultiAssets, _: Option<&XcmContext>, _: FeeReason) -> MultiAssets {
+		MultiAssets::new()
 	}
 }
 
 #[impl_trait_for_tuples::impl_for_tuples(1, 30)]
 impl HandleFee for Tuple {
-	fn handle_fee(fee: Assets, context: Option<&XcmContext>, reason: FeeReason) -> Assets {
+	fn handle_fee(
+		fee: MultiAssets,
+		context: Option<&XcmContext>,
+		reason: FeeReason,
+	) -> MultiAssets {
 		let mut unconsumed_fee = fee;
 		for_tuples!( #(
-			unconsumed_fee = Tuple::handle_fee(unconsumed_fee, context, reason.clone());
+			unconsumed_fee = Tuple::handle_fee(unconsumed_fee, context, reason);
 			if unconsumed_fee.is_none() {
 				return unconsumed_fee;
 			}
@@ -55,15 +60,15 @@ impl HandleFee for Tuple {
 pub struct XcmFeeManagerFromComponents<WaivedLocations, HandleFee>(
 	PhantomData<(WaivedLocations, HandleFee)>,
 );
-impl<WaivedLocations: Contains<Location>, FeeHandler: HandleFee> FeeManager
+impl<WaivedLocations: Contains<MultiLocation>, FeeHandler: HandleFee> FeeManager
 	for XcmFeeManagerFromComponents<WaivedLocations, FeeHandler>
 {
-	fn is_waived(origin: Option<&Location>, _: FeeReason) -> bool {
+	fn is_waived(origin: Option<&MultiLocation>, _: FeeReason) -> bool {
 		let Some(loc) = origin else { return false };
 		WaivedLocations::contains(loc)
 	}
 
-	fn handle_fee(fee: Assets, context: Option<&XcmContext>, reason: FeeReason) {
+	fn handle_fee(fee: MultiAssets, context: Option<&XcmContext>, reason: FeeReason) {
 		FeeHandler::handle_fee(fee, context, reason);
 	}
 }
@@ -71,7 +76,7 @@ impl<WaivedLocations: Contains<Location>, FeeHandler: HandleFee> FeeManager
 /// Try to deposit the given fee in the specified account.
 /// Burns the fee in case of a failure.
 pub fn deposit_or_burn_fee<AssetTransactor: TransactAsset, AccountId: Clone + Into<[u8; 32]>>(
-	fee: Assets,
+	fee: MultiAssets,
 	context: Option<&XcmContext>,
 	receiver: AccountId,
 ) {
@@ -104,9 +109,13 @@ impl<
 		ReceiverAccount: Get<AccountId>,
 	> HandleFee for XcmFeeToAccount<AssetTransactor, AccountId, ReceiverAccount>
 {
-	fn handle_fee(fee: Assets, context: Option<&XcmContext>, _reason: FeeReason) -> Assets {
+	fn handle_fee(
+		fee: MultiAssets,
+		context: Option<&XcmContext>,
+		_reason: FeeReason,
+	) -> MultiAssets {
 		deposit_or_burn_fee::<AssetTransactor, _>(fee, context, ReceiverAccount::get());
 
-		Assets::new()
+		MultiAssets::new()
 	}
 }

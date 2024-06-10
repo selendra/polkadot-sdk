@@ -1,6 +1,6 @@
 [package]
 name = "sc-consensus-beefy-rpc"
-version = "13.0.0"
+version = "4.0.0-dev"
 authors.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later WITH Classpath-exception-2.0"
@@ -12,22 +12,21 @@ homepage = "https://substrate.io"
 workspace = true
 
 [dependencies]
-codec = { package = "parity-scale-codec", version = "3.6.12", features = ["derive"] }
-futures = "0.3.30"
-jsonrpsee = { version = "0.22.5", features = ["client-core", "macros", "server-core"] }
-log = { workspace = true, default-features = true }
+codec = { package = "parity-scale-codec", version = "3.6.1", features = ["derive"] }
+futures = "0.3.21"
+jsonrpsee = { version = "0.16.2", features = ["client-core", "macros", "server"] }
+log = "0.4"
 parking_lot = "0.12.1"
-serde = { features = ["derive"], workspace = true, default-features = true }
-thiserror = { workspace = true }
+serde = { version = "1.0.195", features = ["derive"] }
+thiserror = "1.0"
 sc-consensus-beefy = { path = ".." }
 sp-consensus-beefy = { path = "../../../../primitives/consensus/beefy" }
 sc-rpc = { path = "../../../rpc" }
 sp-core = { path = "../../../../primitives/core" }
 sp-runtime = { path = "../../../../primitives/runtime" }
-sp-application-crypto = { path = "../../../../primitives/application-crypto" }
 
 [dev-dependencies]
-serde_json = { workspace = true, default-features = true }
+serde_json = "1.0.111"
 sc-rpc = { path = "../../../rpc", features = ["test-helpers"] }
 substrate-test-runtime-client = { path = "../../../../test-utils/runtime/client" }
 tokio = { version = "1.22.0", features = ["macros"] }

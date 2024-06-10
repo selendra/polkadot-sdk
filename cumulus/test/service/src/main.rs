@@ -19,8 +19,9 @@ mod cli;
 use std::sync::Arc;
 
 use cli::{RelayChainCli, Subcommand, TestCollatorCli};
-use cumulus_primitives_core::relay_chain::CollatorPair;
-use cumulus_test_service::{chain_spec, new_partial, AnnounceBlockFn};
+use cumulus_primitives_core::{relay_chain::CollatorPair, ParaId};
+use cumulus_test_service::{new_partial, AnnounceBlockFn};
+use polkadot_service::runtime_traits::AccountIdConversion;
 use sc_cli::{CliConfiguration, SubstrateCli};
 use sp_core::Pair;
 
@@ -67,21 +68,24 @@ fn main() -> Result<(), sc_cli::Error> {
 				.create_configuration(&cli, tokio_handle.clone())
 				.expect("Should be able to generate config");
 
+			let parachain_id = ParaId::from(cli.parachain_id);
 			let polkadot_cli = RelayChainCli::new(
 				&config,
 				[RelayChainCli::executable_name()].iter().chain(cli.relaychain_args.iter()),
 			);
+
+			let parachain_account =
+				AccountIdConversion::<polkadot_primitives::AccountId>::into_account_truncating(
+					&parachain_id,
+				);
 
 			let tokio_handle = config.tokio_handle.clone();
 			let polkadot_config =
 				SubstrateCli::create_configuration(&polkadot_cli, &polkadot_cli, tokio_handle)
 					.map_err(|err| format!("Relay chain argument error: {}", err))?;
 
-			let parachain_id = chain_spec::Extensions::try_get(&*config.chain_spec)
-				.map(|e| e.para_id)
-				.ok_or("Could not find parachain extension in chain-spec.")?;
-
 			tracing::info!("Parachain id: {:?}", parachain_id);
+			tracing::info!("Parachain Account: {}", parachain_account);
 			tracing::info!(
 				"Is collating: {}",
 				if config.role.is_authority() { "yes" } else { "no" }
@@ -98,47 +102,21 @@ fn main() -> Result<(), sc_cli::Error> {
 					tracing::info!("Using null consensus.");
 					cumulus_test_service::Consensus::Null
 				})
-				.unwrap_or(cumulus_test_service::Consensus::Aura);
+				.unwrap_or(cumulus_test_service::Consensus::RelayChain);
 
 			let (mut task_manager, _, _, _, _, _) = tokio_runtime
-				.block_on(async move {
-					match polkadot_config.network.network_backend {
-						sc_network::config::NetworkBackendType::Libp2p =>
-							cumulus_test_service::start_node_impl::<
-								_,
-								sc_network::NetworkWorker<_, _>,
-							>(
-								config,
-								collator_key,
-								polkadot_config,
-								parachain_id.into(),
-								cli.disable_block_announcements.then(wrap_announce_block),
-								cli.fail_pov_recovery,
-								|_| Ok(jsonrpsee::RpcModule::new(())),
-								consensus,
-								collator_options,
-								true,
-							)
-							.await,
-						sc_network::config::NetworkBackendType::Litep2p =>
-							cumulus_test_service::start_node_impl::<
-								_,
-								sc_network::Litep2pNetworkBackend,
-							>(
-								config,
-								collator_key,
-								polkadot_config,
-								parachain_id.into(),
-								cli.disable_block_announcements.then(wrap_announce_block),
-								cli.fail_pov_recovery,
-								|_| Ok(jsonrpsee::RpcModule::new(())),
-								consensus,
-								collator_options,
-								true,
-							)
-							.await,
-					}
-				})
+				.block_on(cumulus_test_service::start_node_impl(
+					config,
+					collator_key,
+					polkadot_config,
+					parachain_id,
+					cli.disable_block_announcements.then(wrap_announce_block),
+					cli.fail_pov_recovery,
+					|_| Ok(jsonrpsee::RpcModule::new(())),
+					consensus,
+					collator_options,
+					true,
+				))
 				.expect("could not create Cumulus test service");
 
 			tokio_runtime

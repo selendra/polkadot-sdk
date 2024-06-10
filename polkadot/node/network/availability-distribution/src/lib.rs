@@ -18,9 +18,7 @@ use futures::{future::Either, FutureExt, StreamExt, TryFutureExt};
 
 use sp_keystore::KeystorePtr;
 
-use polkadot_node_network_protocol::request_response::{
-	v1, v2, IncomingRequestReceiver, ReqProtocolNames,
-};
+use polkadot_node_network_protocol::request_response::{v1, IncomingRequestReceiver};
 use polkadot_node_subsystem::{
 	jaeger, messages::AvailabilityDistributionMessage, overseer, FromOrchestra, OverseerSignal,
 	SpawnedSubsystem, SubsystemError,
@@ -43,7 +41,7 @@ mod pov_requester;
 
 /// Responding to erasure chunk requests:
 mod responder;
-use responder::{run_chunk_receivers, run_pov_receiver};
+use responder::{run_chunk_receiver, run_pov_receiver};
 
 mod metrics;
 /// Prometheus `Metrics` for availability distribution.
@@ -60,8 +58,6 @@ pub struct AvailabilityDistributionSubsystem {
 	runtime: RuntimeInfo,
 	/// Receivers to receive messages from.
 	recvs: IncomingRequestReceivers,
-	/// Mapping of the req-response protocols to the full protocol names.
-	req_protocol_names: ReqProtocolNames,
 	/// Prometheus metrics.
 	metrics: Metrics,
 }
@@ -70,10 +66,8 @@ pub struct AvailabilityDistributionSubsystem {
 pub struct IncomingRequestReceivers {
 	/// Receiver for incoming PoV requests.
 	pub pov_req_receiver: IncomingRequestReceiver<v1::PoVFetchingRequest>,
-	/// Receiver for incoming v1 availability chunk requests.
-	pub chunk_req_v1_receiver: IncomingRequestReceiver<v1::ChunkFetchingRequest>,
-	/// Receiver for incoming v2 availability chunk requests.
-	pub chunk_req_v2_receiver: IncomingRequestReceiver<v2::ChunkFetchingRequest>,
+	/// Receiver for incoming availability chunk requests.
+	pub chunk_req_receiver: IncomingRequestReceiver<v1::ChunkFetchingRequest>,
 }
 
 #[overseer::subsystem(AvailabilityDistribution, error=SubsystemError, prefix=self::overseer)]
@@ -91,27 +85,18 @@ impl<Context> AvailabilityDistributionSubsystem {
 #[overseer::contextbounds(AvailabilityDistribution, prefix = self::overseer)]
 impl AvailabilityDistributionSubsystem {
 	/// Create a new instance of the availability distribution.
-	pub fn new(
-		keystore: KeystorePtr,
-		recvs: IncomingRequestReceivers,
-		req_protocol_names: ReqProtocolNames,
-		metrics: Metrics,
-	) -> Self {
+	pub fn new(keystore: KeystorePtr, recvs: IncomingRequestReceivers, metrics: Metrics) -> Self {
 		let runtime = RuntimeInfo::new(Some(keystore));
-		Self { runtime, recvs, req_protocol_names, metrics }
+		Self { runtime, recvs, metrics }
 	}
 
 	/// Start processing work as passed on from the Overseer.
 	async fn run<Context>(self, mut ctx: Context) -> std::result::Result<(), FatalError> {
-		let Self { mut runtime, recvs, metrics, req_protocol_names } = self;
+		let Self { mut runtime, recvs, metrics } = self;
 		let mut spans: HashMap<Hash, jaeger::PerLeafSpan> = HashMap::new();
 
-		let IncomingRequestReceivers {
-			pov_req_receiver,
-			chunk_req_v1_receiver,
-			chunk_req_v2_receiver,
-		} = recvs;
-		let mut requester = Requester::new(req_protocol_names, metrics.clone()).fuse();
+		let IncomingRequestReceivers { pov_req_receiver, chunk_req_receiver } = recvs;
+		let mut requester = Requester::new(metrics.clone()).fuse();
 		let mut warn_freq = gum::Freq::new();
 
 		{
@@ -124,13 +109,7 @@ impl AvailabilityDistributionSubsystem {
 
 			ctx.spawn(
 				"chunk-receiver",
-				run_chunk_receivers(
-					sender,
-					chunk_req_v1_receiver,
-					chunk_req_v2_receiver,
-					metrics.clone(),
-				)
-				.boxed(),
+				run_chunk_receiver(sender, chunk_req_receiver, metrics.clone()).boxed(),
 			)
 			.map_err(FatalError::SpawnTask)?;
 		}

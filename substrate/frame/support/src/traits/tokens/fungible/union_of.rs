@@ -17,8 +17,6 @@
 
 //! Types to combine some `fungible::*` and `fungibles::*` implementations into one union
 //! `fungibles::*` implementation.
-//!
-//! See the [`crate::traits::fungible`] doc for more information about fungible traits.
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::traits::{
@@ -442,26 +440,14 @@ impl<
 		asset: Self::AssetId,
 		who: &AccountId,
 		amount: Self::Balance,
-		preservation: Preservation,
 		precision: Precision,
 		force: Fortitude,
 	) -> Result<Self::Balance, DispatchError> {
 		match Criterion::convert(asset) {
-			Left(()) => <Left as fungible::Mutate<AccountId>>::burn_from(
-				who,
-				amount,
-				preservation,
-				precision,
-				force,
-			),
-			Right(a) => <Right as fungibles::Mutate<AccountId>>::burn_from(
-				a,
-				who,
-				amount,
-				preservation,
-				precision,
-				force,
-			),
+			Left(()) =>
+				<Left as fungible::Mutate<AccountId>>::burn_from(who, amount, precision, force),
+			Right(a) =>
+				<Right as fungibles::Mutate<AccountId>>::burn_from(a, who, amount, precision, force),
 		}
 	}
 	fn shelve(
@@ -741,22 +727,21 @@ impl<
 	fn pair(
 		asset: Self::AssetId,
 		amount: Self::Balance,
-	) -> Result<(fungibles::Debt<AccountId, Self>, fungibles::Credit<AccountId, Self>), DispatchError>
-	{
+	) -> (fungibles::Debt<AccountId, Self>, fungibles::Credit<AccountId, Self>) {
 		match Criterion::convert(asset.clone()) {
 			Left(()) => {
-				let (a, b) = <Left as fungible::Balanced<AccountId>>::pair(amount)?;
-				Ok((
+				let (a, b) = <Left as fungible::Balanced<AccountId>>::pair(amount);
+				(
 					fungibles::imbalance::from_fungible(a, asset.clone()),
 					fungibles::imbalance::from_fungible(b, asset),
-				))
+				)
 			},
 			Right(a) => {
-				let (a, b) = <Right as fungibles::Balanced<AccountId>>::pair(a, amount)?;
-				Ok((
+				let (a, b) = <Right as fungibles::Balanced<AccountId>>::pair(a, amount);
+				(
 					fungibles::imbalance::from_fungibles(a, asset.clone()),
 					fungibles::imbalance::from_fungibles(b, asset),
-				))
+				)
 			},
 		}
 	}
@@ -934,31 +919,6 @@ impl<
 			Left(()) => <Left as AccountTouch<(), AccountId>>::touch((), who, depositor),
 			Right(a) =>
 				<Right as AccountTouch<Right::AssetId, AccountId>>::touch(a, who, depositor),
-		}
-	}
-}
-
-impl<
-		Left: fungible::Inspect<AccountId>,
-		Right: fungibles::Inspect<AccountId> + fungibles::Refund<AccountId>,
-		Criterion: Convert<AssetKind, Either<(), <Right as fungibles::Refund<AccountId>>::AssetId>>,
-		AssetKind: AssetId,
-		AccountId,
-	> fungibles::Refund<AccountId> for UnionOf<Left, Right, Criterion, AssetKind, AccountId>
-{
-	type AssetId = AssetKind;
-	type Balance = <Right as fungibles::Refund<AccountId>>::Balance;
-
-	fn deposit_held(asset: AssetKind, who: AccountId) -> Option<(AccountId, Self::Balance)> {
-		match Criterion::convert(asset) {
-			Left(()) => None,
-			Right(a) => <Right as fungibles::Refund<AccountId>>::deposit_held(a, who),
-		}
-	}
-	fn refund(asset: AssetKind, who: AccountId) -> DispatchResult {
-		match Criterion::convert(asset) {
-			Left(()) => Err(DispatchError::Unavailable),
-			Right(a) => <Right as fungibles::Refund<AccountId>>::refund(a, who),
 		}
 	}
 }

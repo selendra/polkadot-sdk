@@ -18,8 +18,7 @@
 
 //! Logic for keeping track of BEEFY peers.
 
-use sc_network::ReputationChange;
-use sc_network_types::PeerId;
+use sc_network::{PeerId, ReputationChange};
 use sp_runtime::traits::{Block, NumberFor, Zero};
 use std::collections::{HashMap, VecDeque};
 

@@ -20,7 +20,7 @@ use codec::Decode;
 use frame_support::{
 	migrations::VersionedMigration,
 	storage,
-	traits::{Get, UncheckedOnRuntimeUpgrade},
+	traits::{Get, OnRuntimeUpgrade},
 	weights::Weight,
 };
 use sp_consensus_grandpa::AuthorityList;
@@ -36,9 +36,9 @@ fn load_authority_list() -> AuthorityList {
 }
 
 /// Actual implementation of [`MigrateV4ToV5`].
-pub struct UncheckedMigrateImpl<T>(PhantomData<T>);
+pub struct MigrateImpl<T>(PhantomData<T>);
 
-impl<T: crate::Config> UncheckedOnRuntimeUpgrade for UncheckedMigrateImpl<T> {
+impl<T: crate::Config> OnRuntimeUpgrade for MigrateImpl<T> {
 	#[cfg(feature = "try-runtime")]
 	fn pre_upgrade() -> Result<Vec<u8>, sp_runtime::TryRuntimeError> {
 		use codec::Encode;
@@ -92,10 +92,5 @@ impl<T: crate::Config> UncheckedOnRuntimeUpgrade for UncheckedMigrateImpl<T> {
 /// Migrate the storage from V4 to V5.
 ///
 /// Switches from `GRANDPA_AUTHORITIES_KEY` to a normal FRAME storage item.
-pub type MigrateV4ToV5<T> = VersionedMigration<
-	4,
-	5,
-	UncheckedMigrateImpl<T>,
-	Pallet<T>,
-	<T as frame_system::Config>::DbWeight,
->;
+pub type MigrateV4ToV5<T> =
+	VersionedMigration<4, 5, MigrateImpl<T>, Pallet<T>, <T as frame_system::Config>::DbWeight>;

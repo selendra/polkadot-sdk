@@ -16,9 +16,8 @@
 
 //! Traits and utilities to help with origin mutation and bridging.
 
-use crate::InspectMessageQueues;
-use codec::{Decode, Encode};
 use frame_support::{ensure, traits::Get};
+use parity_scale_codec::{Decode, Encode};
 use sp_std::{convert::TryInto, marker::PhantomData, prelude::*};
 use xcm::prelude::*;
 use xcm_executor::traits::{validate_export, ExportXcm};
@@ -29,18 +28,18 @@ use SendError::*;
 /// chain, itself situated at `universal_local` within the consensus universe. If
 /// `dest` is not a location in remote consensus, then an error is returned.
 pub fn ensure_is_remote(
-	universal_local: impl Into<InteriorLocation>,
-	dest: impl Into<Location>,
-) -> Result<(NetworkId, InteriorLocation), Location> {
+	universal_local: impl Into<InteriorMultiLocation>,
+	dest: impl Into<MultiLocation>,
+) -> Result<(NetworkId, InteriorMultiLocation), MultiLocation> {
 	let dest = dest.into();
 	let universal_local = universal_local.into();
 	let local_net = match universal_local.global_consensus() {
 		Ok(x) => x,
 		Err(_) => return Err(dest),
 	};
-	let universal_destination: InteriorLocation = universal_local
+	let universal_destination: InteriorMultiLocation = universal_local
 		.into_location()
-		.appended_with(dest.clone())
+		.appended_with(dest)
 		.map_err(|x| x.1)?
 		.try_into()?;
 	let (remote_dest, remote_net) = match universal_destination.split_first() {
@@ -60,18 +59,18 @@ pub fn ensure_is_remote(
 pub struct UnpaidLocalExporter<Exporter, UniversalLocation>(
 	PhantomData<(Exporter, UniversalLocation)>,
 );
-impl<Exporter: ExportXcm, UniversalLocation: Get<InteriorLocation>> SendXcm
+impl<Exporter: ExportXcm, UniversalLocation: Get<InteriorMultiLocation>> SendXcm
 	for UnpaidLocalExporter<Exporter, UniversalLocation>
 {
 	type Ticket = Exporter::Ticket;
 
 	fn validate(
-		dest: &mut Option<Location>,
+		dest: &mut Option<MultiLocation>,
 		xcm: &mut Option<Xcm<()>>,
 	) -> SendResult<Exporter::Ticket> {
 		let d = dest.take().ok_or(MissingArgument)?;
 		let universal_source = UniversalLocation::get();
-		let devolved = match ensure_is_remote(universal_source.clone(), d) {
+		let devolved = match ensure_is_remote(universal_source, d) {
 			Ok(x) => x,
 			Err(d) => {
 				*dest = Some(d);
@@ -97,18 +96,18 @@ pub trait ExporterFor {
 	/// the bridge chain as well as payment for the use of the `ExportMessage` instruction.
 	fn exporter_for(
 		network: &NetworkId,
-		remote_location: &InteriorLocation,
+		remote_location: &InteriorMultiLocation,
 		message: &Xcm<()>,
-	) -> Option<(Location, Option<Asset>)>;
+	) -> Option<(MultiLocation, Option<MultiAsset>)>;
 }
 
 #[impl_trait_for_tuples::impl_for_tuples(30)]
 impl ExporterFor for Tuple {
 	fn exporter_for(
 		network: &NetworkId,
-		remote_location: &InteriorLocation,
+		remote_location: &InteriorMultiLocation,
 		message: &Xcm<()>,
-	) -> Option<(Location, Option<Asset>)> {
+	) -> Option<(MultiLocation, Option<MultiAsset>)> {
 		for_tuples!( #(
 			if let Some(r) = Tuple::exporter_for(network, remote_location, message) {
 				return Some(r);
@@ -126,21 +125,21 @@ pub struct NetworkExportTableItem {
 	/// If `Some`, the requested remote location must be equal to one of the items in the vector.
 	/// These are locations in the remote network.
 	/// If `None`, then the check is skipped.
-	pub remote_location_filter: Option<Vec<InteriorLocation>>,
+	pub remote_location_filter: Option<Vec<InteriorMultiLocation>>,
 	/// Locally-routable bridge with bridging capabilities to the `remote_network` and
 	/// `remote_location`. See [`ExporterFor`] for more details.
-	pub bridge: Location,
+	pub bridge: MultiLocation,
 	/// The local payment.
 	/// See [`ExporterFor`] for more details.
-	pub payment: Option<Asset>,
+	pub payment: Option<MultiAsset>,
 }
 
 impl NetworkExportTableItem {
 	pub fn new(
 		remote_network: NetworkId,
-		remote_location_filter: Option<Vec<InteriorLocation>>,
-		bridge: Location,
-		payment: Option<Asset>,
+		remote_location_filter: Option<Vec<InteriorMultiLocation>>,
+		bridge: MultiLocation,
+		payment: Option<MultiAsset>,
 	) -> Self {
 		Self { remote_network, remote_location_filter, bridge, payment }
 	}
@@ -153,9 +152,9 @@ pub struct NetworkExportTable<T>(sp_std::marker::PhantomData<T>);
 impl<T: Get<Vec<NetworkExportTableItem>>> ExporterFor for NetworkExportTable<T> {
 	fn exporter_for(
 		network: &NetworkId,
-		remote_location: &InteriorLocation,
+		remote_location: &InteriorMultiLocation,
 		_: &Xcm<()>,
-	) -> Option<(Location, Option<Asset>)> {
+	) -> Option<(MultiLocation, Option<MultiAsset>)> {
 		T::get()
 			.into_iter()
 			.find(|item| {
@@ -188,23 +187,23 @@ pub fn forward_id_for(original_id: &XcmHash) -> XcmHash {
 /// end with the `SetTopic` instruction.
 ///
 /// In the case that the message ends with a `SetTopic(T)` (as should be the case if the top-level
-/// router is `WithUniqueTopic`), then the forwarding message (i.e. the one carrying the
+/// router is `EnsureUniqueTopic`), then the forwarding message (i.e. the one carrying the
 /// export instruction *to* the bridge in local consensus) will also end with a `SetTopic` whose
 /// inner is `forward_id_for(T)`. If this is not the case then the onward message will not be given
 /// the `SetTopic` afterword.
 pub struct UnpaidRemoteExporter<Bridges, Router, UniversalLocation>(
 	PhantomData<(Bridges, Router, UniversalLocation)>,
 );
-impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorLocation>> SendXcm
+impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorMultiLocation>> SendXcm
 	for UnpaidRemoteExporter<Bridges, Router, UniversalLocation>
 {
 	type Ticket = Router::Ticket;
 
 	fn validate(
-		dest: &mut Option<Location>,
+		dest: &mut Option<MultiLocation>,
 		msg: &mut Option<Xcm<()>>,
 	) -> SendResult<Router::Ticket> {
-		let d = dest.clone().ok_or(MissingArgument)?;
+		let d = dest.ok_or(MissingArgument)?;
 		let devolved = ensure_is_remote(UniversalLocation::get(), d).map_err(|_| NotApplicable)?;
 		let (remote_network, remote_location) = devolved;
 		let xcm = msg.take().ok_or(MissingArgument)?;
@@ -255,25 +254,24 @@ impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorLocat
 /// end with the `SetTopic` instruction.
 ///
 /// In the case that the message ends with a `SetTopic(T)` (as should be the case if the top-level
-/// router is `WithUniqueTopic`), then the forwarding message (i.e. the one carrying the
+/// router is `EnsureUniqueTopic`), then the forwarding message (i.e. the one carrying the
 /// export instruction *to* the bridge in local consensus) will also end with a `SetTopic` whose
 /// inner is `forward_id_for(T)`. If this is not the case then the onward message will not be given
 /// the `SetTopic` afterword.
 pub struct SovereignPaidRemoteExporter<Bridges, Router, UniversalLocation>(
 	PhantomData<(Bridges, Router, UniversalLocation)>,
 );
-impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorLocation>> SendXcm
+impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorMultiLocation>> SendXcm
 	for SovereignPaidRemoteExporter<Bridges, Router, UniversalLocation>
 {
 	type Ticket = Router::Ticket;
 
 	fn validate(
-		dest: &mut Option<Location>,
+		dest: &mut Option<MultiLocation>,
 		msg: &mut Option<Xcm<()>>,
 	) -> SendResult<Router::Ticket> {
-		let d = dest.as_ref().ok_or(MissingArgument)?;
-		let devolved =
-			ensure_is_remote(UniversalLocation::get(), d.clone()).map_err(|_| NotApplicable)?;
+		let d = *dest.as_ref().ok_or(MissingArgument)?;
+		let devolved = ensure_is_remote(UniversalLocation::get(), d).map_err(|_| NotApplicable)?;
 		let (remote_network, remote_location) = devolved;
 		let xcm = msg.take().ok_or(MissingArgument)?;
 
@@ -301,19 +299,13 @@ impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorLocat
 		let mut message = Xcm(if let Some(ref payment) = maybe_payment {
 			let fees = payment
 				.clone()
-				.reanchored(&bridge, &UniversalLocation::get())
+				.reanchored(&bridge, UniversalLocation::get())
 				.map_err(|_| Unroutable)?;
 			vec![
 				WithdrawAsset(fees.clone().into()),
 				BuyExecution { fees, weight_limit: Unlimited },
-				// `SetAppendix` ensures that `fees` are not trapped in any case, for example, when
-				// `ExportXcm::validate` encounters an error during the processing of
-				// `ExportMessage`.
-				SetAppendix(Xcm(vec![DepositAsset {
-					assets: AllCounted(1).into(),
-					beneficiary: local_from_bridge,
-				}])),
 				export_instruction,
+				DepositAsset { assets: All.into(), beneficiary: local_from_bridge },
 			]
 		} else {
 			vec![export_instruction]
@@ -333,14 +325,6 @@ impl<Bridges: ExporterFor, Router: SendXcm, UniversalLocation: Get<InteriorLocat
 
 	fn deliver(ticket: Router::Ticket) -> Result<XcmHash, SendError> {
 		Router::deliver(ticket)
-	}
-}
-
-impl<Bridges, Router: InspectMessageQueues, UniversalLocation> InspectMessageQueues
-	for SovereignPaidRemoteExporter<Bridges, Router, UniversalLocation>
-{
-	fn get_messages() -> Vec<(VersionedLocation, Vec<VersionedXcm<()>>)> {
-		Router::get_messages()
 	}
 }
 
@@ -382,7 +366,7 @@ pub struct BridgeMessage {
 	/// The message destination as a *Universal Location*. This means it begins with a
 	/// `GlobalConsensus` junction describing the network under which global consensus happens.
 	/// If this does not match our global consensus then it's a fatal error.
-	pub universal_dest: VersionedInteriorLocation,
+	pub universal_dest: VersionedInteriorMultiLocation,
 	pub message: VersionedXcm<()>,
 }
 
@@ -402,8 +386,8 @@ pub struct BridgeBlobDispatcher<Router, OurPlace, OurPlaceBridgeInstance>(
 );
 impl<
 		Router: SendXcm,
-		OurPlace: Get<InteriorLocation>,
-		OurPlaceBridgeInstance: Get<Option<InteriorLocation>>,
+		OurPlace: Get<InteriorMultiLocation>,
+		OurPlaceBridgeInstance: Get<Option<InteriorMultiLocation>>,
 	> DispatchBlob for BridgeBlobDispatcher<Router, OurPlace, OurPlaceBridgeInstance>
 {
 	fn dispatch_blob(blob: Vec<u8>) -> Result<(), DispatchBlobError> {
@@ -412,7 +396,7 @@ impl<
 			our_universal.global_consensus().map_err(|()| DispatchBlobError::Unbridgable)?;
 		let BridgeMessage { universal_dest, message } =
 			Decode::decode(&mut &blob[..]).map_err(|_| DispatchBlobError::InvalidEncoding)?;
-		let universal_dest: InteriorLocation = universal_dest
+		let universal_dest: InteriorMultiLocation = universal_dest
 			.try_into()
 			.map_err(|_| DispatchBlobError::UnsupportedLocationVersion)?;
 		// `universal_dest` is the desired destination within the universe: first we need to check
@@ -453,9 +437,9 @@ pub struct HaulBlobExporter<Bridge, BridgedNetwork, DestinationVersion, Price>(
 /// ```
 impl<
 		Bridge: HaulBlob,
-		BridgedNetwork: Get<Location>,
+		BridgedNetwork: Get<MultiLocation>,
 		DestinationVersion: GetVersion,
-		Price: Get<Assets>,
+		Price: Get<MultiAssets>,
 	> ExportXcm for HaulBlobExporter<Bridge, BridgedNetwork, DestinationVersion, Price>
 {
 	type Ticket = (Vec<u8>, XcmHash);
@@ -463,12 +447,12 @@ impl<
 	fn validate(
 		network: NetworkId,
 		_channel: u32,
-		universal_source: &mut Option<InteriorLocation>,
-		destination: &mut Option<InteriorLocation>,
+		universal_source: &mut Option<InteriorMultiLocation>,
+		destination: &mut Option<InteriorMultiLocation>,
 		message: &mut Option<Xcm<()>>,
-	) -> Result<((Vec<u8>, XcmHash), Assets), SendError> {
+	) -> Result<((Vec<u8>, XcmHash), MultiAssets), SendError> {
 		let (bridged_network, bridged_network_location_parents) = {
-			let Location { parents, interior: mut junctions } = BridgedNetwork::get();
+			let MultiLocation { parents, interior: mut junctions } = BridgedNetwork::get();
 			match junctions.take_first() {
 				Some(GlobalConsensus(network)) => (network, parents),
 				_ => return Err(SendError::NotApplicable),
@@ -483,8 +467,8 @@ impl<
 		let (universal_dest, version) =
 			match dest.pushed_front_with(GlobalConsensus(bridged_network)) {
 				Ok(d) => {
-					let version = DestinationVersion::get_version_for(&Location::from(
-						AncestorThen(bridged_network_location_parents, d.clone()),
+					let version = DestinationVersion::get_version_for(&MultiLocation::from(
+						AncestorThen(bridged_network_location_parents, d),
 					))
 					.ok_or(SendError::DestinationUnsupported)?;
 					(d, version)
@@ -517,7 +501,7 @@ impl<
 		let message = VersionedXcm::from(message)
 			.into_version(version)
 			.map_err(|()| SendError::DestinationUnsupported)?;
-		let universal_dest = VersionedInteriorLocation::from(universal_dest)
+		let universal_dest = VersionedInteriorMultiLocation::from(universal_dest)
 			.into_version(version)
 			.map_err(|()| SendError::DestinationUnsupported)?;
 
@@ -564,10 +548,10 @@ mod tests {
 		type Ticket = ();
 
 		fn validate(
-			_destination: &mut Option<Location>,
+			_destination: &mut Option<MultiLocation>,
 			_message: &mut Option<Xcm<()>>,
 		) -> SendResult<Self::Ticket> {
-			Ok(((), Assets::new()))
+			Ok(((), MultiAssets::new()))
 		}
 
 		fn deliver(_ticket: Self::Ticket) -> Result<XcmHash, SendError> {
@@ -578,10 +562,10 @@ mod tests {
 	/// Generic test case asserting that dest and msg is not consumed by `validate` implementation
 	/// of `SendXcm` in case of expected result.
 	fn ensure_validate_does_not_consume_dest_or_msg<S: SendXcm>(
-		dest: Location,
+		dest: MultiLocation,
 		assert_result: impl Fn(SendResult<S::Ticket>),
 	) {
-		let mut dest_wrapper = Some(dest.clone());
+		let mut dest_wrapper = Some(dest);
 		let msg = Xcm::<()>::new();
 		let mut msg_wrapper = Some(msg.clone());
 
@@ -596,19 +580,19 @@ mod tests {
 	fn remote_exporters_does_not_consume_dest_or_msg_on_not_applicable() {
 		frame_support::parameter_types! {
 			pub Local: NetworkId = ByGenesis([0; 32]);
-			pub UniversalLocation: InteriorLocation = [GlobalConsensus(Local::get()), Parachain(1234)].into();
+			pub UniversalLocation: InteriorMultiLocation = X2(GlobalConsensus(Local::get()), Parachain(1234));
 			pub DifferentRemote: NetworkId = ByGenesis([22; 32]);
 			// no routers
 			pub BridgeTable: Vec<NetworkExportTableItem> = vec![];
 		}
 
 		// check with local destination (should be remote)
-		let local_dest: Location = (Parent, Parachain(5678)).into();
-		assert!(ensure_is_remote(UniversalLocation::get(), local_dest.clone()).is_err());
+		let local_dest = (Parent, Parachain(5678)).into();
+		assert!(ensure_is_remote(UniversalLocation::get(), local_dest).is_err());
 
 		ensure_validate_does_not_consume_dest_or_msg::<
 			UnpaidRemoteExporter<NetworkExportTable<BridgeTable>, OkSender, UniversalLocation>,
-		>(local_dest.clone(), |result| assert_eq!(Err(NotApplicable), result));
+		>(local_dest, |result| assert_eq!(Err(NotApplicable), result));
 
 		ensure_validate_does_not_consume_dest_or_msg::<
 			SovereignPaidRemoteExporter<
@@ -619,12 +603,12 @@ mod tests {
 		>(local_dest, |result| assert_eq!(Err(NotApplicable), result));
 
 		// check with not applicable destination
-		let remote_dest: Location = (Parent, Parent, DifferentRemote::get()).into();
-		assert!(ensure_is_remote(UniversalLocation::get(), remote_dest.clone()).is_ok());
+		let remote_dest = (Parent, Parent, DifferentRemote::get()).into();
+		assert!(ensure_is_remote(UniversalLocation::get(), remote_dest).is_ok());
 
 		ensure_validate_does_not_consume_dest_or_msg::<
 			UnpaidRemoteExporter<NetworkExportTable<BridgeTable>, OkSender, UniversalLocation>,
-		>(remote_dest.clone(), |result| assert_eq!(Err(NotApplicable), result));
+		>(remote_dest, |result| assert_eq!(Err(NotApplicable), result));
 
 		ensure_validate_does_not_consume_dest_or_msg::<
 			SovereignPaidRemoteExporter<
@@ -639,15 +623,15 @@ mod tests {
 	fn network_export_table_works() {
 		frame_support::parameter_types! {
 			pub NetworkA: NetworkId = ByGenesis([0; 32]);
-			pub Parachain1000InNetworkA: InteriorLocation = [Parachain(1000)].into();
-			pub Parachain2000InNetworkA: InteriorLocation = [Parachain(2000)].into();
+			pub Parachain1000InNetworkA: InteriorMultiLocation = X1(Parachain(1000));
+			pub Parachain2000InNetworkA: InteriorMultiLocation = X1(Parachain(2000));
 
 			pub NetworkB: NetworkId = ByGenesis([1; 32]);
 
-			pub BridgeToALocation: Location = Location::new(1, [Parachain(1234)]);
-			pub BridgeToBLocation: Location = Location::new(1, [Parachain(4321)]);
+			pub BridgeToALocation: MultiLocation = MultiLocation::new(1, X1(Parachain(1234)));
+			pub BridgeToBLocation: MultiLocation = MultiLocation::new(1, X1(Parachain(4321)));
 
-			pub PaymentForNetworkAAndParachain2000: Asset = (Location::parent(), 150).into();
+			pub PaymentForNetworkAAndParachain2000: MultiAsset = (MultiLocation::parent(), 150).into();
 
 			pub BridgeTable: sp_std::vec::Vec<NetworkExportTableItem> = sp_std::vec![
 				// NetworkA allows `Parachain(1000)` as remote location WITHOUT payment.
@@ -674,19 +658,19 @@ mod tests {
 			];
 		}
 
-		let test_data: Vec<(NetworkId, InteriorLocation, Option<(Location, Option<Asset>)>)> = vec![
-			(NetworkA::get(), [Parachain(1000)].into(), Some((BridgeToALocation::get(), None))),
-			(NetworkA::get(), [Parachain(1000), GeneralIndex(1)].into(), None),
+		let test_data = vec![
+			(NetworkA::get(), X1(Parachain(1000)), Some((BridgeToALocation::get(), None))),
+			(NetworkA::get(), X2(Parachain(1000), GeneralIndex(1)), None),
 			(
 				NetworkA::get(),
-				[Parachain(2000)].into(),
+				X1(Parachain(2000)),
 				Some((BridgeToALocation::get(), Some(PaymentForNetworkAAndParachain2000::get()))),
 			),
-			(NetworkA::get(), [Parachain(2000), GeneralIndex(1)].into(), None),
-			(NetworkA::get(), [Parachain(3000)].into(), None),
-			(NetworkB::get(), [Parachain(1000)].into(), Some((BridgeToBLocation::get(), None))),
-			(NetworkB::get(), [Parachain(2000)].into(), Some((BridgeToBLocation::get(), None))),
-			(NetworkB::get(), [Parachain(3000)].into(), Some((BridgeToBLocation::get(), None))),
+			(NetworkA::get(), X2(Parachain(2000), GeneralIndex(1)), None),
+			(NetworkA::get(), X1(Parachain(3000)), None),
+			(NetworkB::get(), X1(Parachain(1000)), Some((BridgeToBLocation::get(), None))),
+			(NetworkB::get(), X1(Parachain(2000)), Some((BridgeToBLocation::get(), None))),
+			(NetworkB::get(), X1(Parachain(3000)), Some((BridgeToBLocation::get(), None))),
 		];
 
 		for (network, remote_location, expected_result) in test_data {

@@ -54,10 +54,11 @@ pub type UncheckedExtrinsic =
 	sp_runtime::generic::UncheckedExtrinsic<AccountId, RuntimeCall, (), ()>;
 
 frame_support::construct_runtime!(
-	pub enum Runtime {
-		System: frame_system,
-		Balances: pallet_balances,
-		MultiPhase: multi_phase,
+	pub struct Runtime
+	{
+		System: frame_system::{Pallet, Call, Event<T>, Config<T>},
+		Balances: pallet_balances::{Pallet, Call, Event<T>, Config<T>},
+		MultiPhase: multi_phase::{Pallet, Call, Event<T>},
 	}
 );
 
@@ -208,7 +209,7 @@ pub fn witness() -> SolutionOrSnapshotSize {
 		.unwrap_or_default()
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
 	type SS58Prefix = ();
 	type BaseCallFilter = frame_support::traits::Everything;
@@ -259,6 +260,7 @@ impl pallet_balances::Config for Runtime {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type MaxHolds = ();
 }
 
 #[derive(Default, Eq, PartialEq, Debug, Clone, Copy)]

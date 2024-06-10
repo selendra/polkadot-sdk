@@ -33,22 +33,21 @@ use cumulus_relay_chain_interface::RelayChainInterface;
 
 use polkadot_node_primitives::CollationResult;
 use polkadot_overseer::Handle as OverseerHandle;
-use polkadot_primitives::{CollatorPair, Id as ParaId, ValidationCode};
+use polkadot_primitives::{CollatorPair, Id as ParaId};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use sc_client_api::{backend::AuxStore, BlockBackend, BlockOf};
 use sc_consensus::BlockImport;
-use sp_api::{CallApiAt, ProvideRuntimeApi};
+use sp_api::ProvideRuntimeApi;
 use sp_application_crypto::AppPublic;
 use sp_blockchain::HeaderBackend;
 use sp_consensus::SyncOracle;
-use sp_consensus_aura::AuraApi;
+use sp_consensus_aura::{AuraApi, SlotDuration};
 use sp_core::crypto::Pair;
 use sp_inherents::CreateInherentDataProviders;
 use sp_keystore::KeystorePtr;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT, Member};
-use sp_state_machine::Backend as _;
-use std::{sync::Arc, time::Duration};
+use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 use crate::collator as collator_util;
 
@@ -74,6 +73,8 @@ pub struct Params<BI, CIDP, Client, RClient, SO, Proposer, CS> {
 	pub para_id: ParaId,
 	/// A handle to the relay-chain client's "Overseer" or task orchestrator.
 	pub overseer_handle: OverseerHandle,
+	/// The length of slots in this chain.
+	pub slot_duration: SlotDuration,
 	/// The length of slots in the relay chain.
 	pub relay_chain_slot_duration: Duration,
 	/// The underlying block proposer this should call into.
@@ -99,7 +100,6 @@ where
 		+ AuxStore
 		+ HeaderBackend<Block>
 		+ BlockBackend<Block>
-		+ CallApiAt<Block>
 		+ Send
 		+ Sync
 		+ 'static,
@@ -141,8 +141,6 @@ where
 			collator_util::Collator::<Block, P, _, _, _, _, _>::new(params)
 		};
 
-		let mut last_processed_slot = 0;
-
 		while let Some(request) = collation_requests.next().await {
 			macro_rules! reject_with_error {
 				($err:expr) => {{
@@ -172,22 +170,6 @@ where
 				continue
 			}
 
-			let Ok(Some(code)) =
-				params.para_client.state_at(parent_hash).map_err(drop).and_then(|s| {
-					s.storage(&sp_core::storage::well_known_keys::CODE).map_err(drop)
-				})
-			else {
-				continue;
-			};
-
-			super::check_validation_code_or_log(
-				&ValidationCode::from(code).hash(),
-				params.para_id,
-				&params.relay_client,
-				*request.relay_parent(),
-			)
-			.await;
-
 			let relay_parent_header =
 				match params.relay_client.header(RBlockId::hash(*request.relay_parent())).await {
 					Err(e) => reject_with_error!(e),
@@ -195,16 +177,11 @@ where
 					Ok(Some(h)) => h,
 				};
 
-			let slot_duration = match params.para_client.runtime_api().slot_duration(parent_hash) {
-				Ok(d) => d,
-				Err(e) => reject_with_error!(e),
-			};
-
 			let claim = match collator_util::claim_slot::<_, _, P>(
 				&*params.para_client,
 				parent_hash,
 				&relay_parent_header,
-				slot_duration,
+				params.slot_duration,
 				params.relay_chain_slot_duration,
 				&params.keystore,
 			)
@@ -214,18 +191,6 @@ where
 				Ok(Some(c)) => c,
 				Err(e) => reject_with_error!(e),
 			};
-
-			// With async backing this function will be called every relay chain block.
-			//
-			// Most parachains currently run with 12 seconds slots and thus, they would try to
-			// produce multiple blocks per slot which very likely would fail on chain. Thus, we have
-			// this "hack" to only produce on block per slot.
-			//
-			// With https://github.com/paritytech/polkadot-sdk/issues/3168 this implementation will be
-			// obsolete and also the underlying issue will be fixed.
-			if last_processed_slot >= *claim.slot() {
-				continue
-			}
 
 			let (parachain_inherent_data, other_inherent_data) = try_request!(
 				collator
@@ -263,8 +228,6 @@ where
 				request.complete(None);
 				tracing::debug!(target: crate::LOG_TARGET, "No block proposal");
 			}
-
-			last_processed_slot = *claim.slot();
 		}
 	}
 }

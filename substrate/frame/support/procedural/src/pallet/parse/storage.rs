@@ -29,7 +29,6 @@ mod keyword {
 	syn::custom_keyword!(storage_prefix);
 	syn::custom_keyword!(unbounded);
 	syn::custom_keyword!(whitelist_storage);
-	syn::custom_keyword!(disable_try_decode_storage);
 	syn::custom_keyword!(OptionQuery);
 	syn::custom_keyword!(ResultQuery);
 	syn::custom_keyword!(ValueQuery);
@@ -40,13 +39,11 @@ mod keyword {
 /// * `#[pallet::storage_prefix = "CustomName"]`
 /// * `#[pallet::unbounded]`
 /// * `#[pallet::whitelist_storage]
-/// * `#[pallet::disable_try_decode_storage]`
 pub enum PalletStorageAttr {
 	Getter(syn::Ident, proc_macro2::Span),
 	StorageName(syn::LitStr, proc_macro2::Span),
 	Unbounded(proc_macro2::Span),
 	WhitelistStorage(proc_macro2::Span),
-	DisableTryDecodeStorage(proc_macro2::Span),
 }
 
 impl PalletStorageAttr {
@@ -56,7 +53,6 @@ impl PalletStorageAttr {
 			Self::StorageName(_, span) |
 			Self::Unbounded(span) |
 			Self::WhitelistStorage(span) => *span,
-			Self::DisableTryDecodeStorage(span) => *span,
 		}
 	}
 }
@@ -97,9 +93,6 @@ impl syn::parse::Parse for PalletStorageAttr {
 		} else if lookahead.peek(keyword::whitelist_storage) {
 			content.parse::<keyword::whitelist_storage>()?;
 			Ok(Self::WhitelistStorage(attr_span))
-		} else if lookahead.peek(keyword::disable_try_decode_storage) {
-			content.parse::<keyword::disable_try_decode_storage>()?;
-			Ok(Self::DisableTryDecodeStorage(attr_span))
 		} else {
 			Err(lookahead.error())
 		}
@@ -111,7 +104,6 @@ struct PalletStorageAttrInfo {
 	rename_as: Option<syn::LitStr>,
 	unbounded: bool,
 	whitelisted: bool,
-	try_decode: bool,
 }
 
 impl PalletStorageAttrInfo {
@@ -120,7 +112,6 @@ impl PalletStorageAttrInfo {
 		let mut rename_as = None;
 		let mut unbounded = false;
 		let mut whitelisted = false;
-		let mut disable_try_decode_storage = false;
 		for attr in attrs {
 			match attr {
 				PalletStorageAttr::Getter(ident, ..) if getter.is_none() => getter = Some(ident),
@@ -128,8 +119,6 @@ impl PalletStorageAttrInfo {
 					rename_as = Some(name),
 				PalletStorageAttr::Unbounded(..) if !unbounded => unbounded = true,
 				PalletStorageAttr::WhitelistStorage(..) if !whitelisted => whitelisted = true,
-				PalletStorageAttr::DisableTryDecodeStorage(..) if !disable_try_decode_storage =>
-					disable_try_decode_storage = true,
 				attr =>
 					return Err(syn::Error::new(
 						attr.attr_span(),
@@ -138,13 +127,7 @@ impl PalletStorageAttrInfo {
 			}
 		}
 
-		Ok(PalletStorageAttrInfo {
-			getter,
-			rename_as,
-			unbounded,
-			whitelisted,
-			try_decode: !disable_try_decode_storage,
-		})
+		Ok(PalletStorageAttrInfo { getter, rename_as, unbounded, whitelisted })
 	}
 }
 
@@ -203,8 +186,6 @@ pub struct StorageDef {
 	pub unbounded: bool,
 	/// Whether or not reads to this storage key will be ignored by benchmarking
 	pub whitelisted: bool,
-	/// Whether or not to try to decode the storage key when running try-runtime checks.
-	pub try_decode: bool,
 	/// Whether or not a default hasher is allowed to replace `_`
 	pub use_default_hasher: bool,
 }
@@ -794,7 +775,7 @@ impl StorageDef {
 		};
 
 		let attrs: Vec<PalletStorageAttr> = helper::take_item_pallet_attrs(&mut item.attrs)?;
-		let PalletStorageAttrInfo { getter, rename_as, mut unbounded, whitelisted, try_decode } =
+		let PalletStorageAttrInfo { getter, rename_as, mut unbounded, whitelisted } =
 			PalletStorageAttrInfo::from_attrs(attrs)?;
 
 		// set all storages to be unbounded if dev_mode is enabled
@@ -940,7 +921,6 @@ impl StorageDef {
 			named_generics,
 			unbounded,
 			whitelisted,
-			try_decode,
 			use_default_hasher,
 		})
 	}

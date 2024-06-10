@@ -14,10 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Cumulus.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-	collections::{BTreeMap, VecDeque},
-	pin::Pin,
-};
+use std::pin::Pin;
 
 use cumulus_relay_chain_interface::{RelayChainError, RelayChainResult};
 use cumulus_relay_chain_rpc_interface::RelayChainRpcClient;
@@ -26,7 +23,8 @@ use polkadot_core_primitives::{Block, BlockNumber, Hash, Header};
 use polkadot_overseer::{ChainApiBackend, RuntimeApiSubsystemClient};
 use polkadot_primitives::{
 	async_backing::{AsyncBackingParams, BackingState},
-	slashing, ApprovalVotingParams, CoreIndex, NodeFeatures,
+	slashing,
+	vstaging::{ApprovalVotingParams, NodeFeatures},
 };
 use sc_authority_discovery::{AuthorityDiscovery, Error as AuthorityDiscoveryError};
 use sc_client_api::AuxStore;
@@ -443,24 +441,6 @@ impl RuntimeApiSubsystemClient for BlockChainRpcClient {
 
 	async fn node_features(&self, at: Hash) -> Result<NodeFeatures, ApiError> {
 		Ok(self.rpc_client.parachain_host_node_features(at).await?)
-	}
-
-	async fn claim_queue(
-		&self,
-		at: Hash,
-	) -> Result<BTreeMap<CoreIndex, VecDeque<cumulus_primitives_core::ParaId>>, ApiError> {
-		Ok(self.rpc_client.parachain_host_claim_queue(at).await?)
-	}
-
-	async fn candidates_pending_availability(
-		&self,
-		at: Hash,
-		para_id: cumulus_primitives_core::ParaId,
-	) -> Result<Vec<polkadot_primitives::CommittedCandidateReceipt<Hash>>, sp_api::ApiError> {
-		Ok(self
-			.rpc_client
-			.parachain_host_candidates_pending_availability(at, para_id)
-			.await?)
 	}
 }
 

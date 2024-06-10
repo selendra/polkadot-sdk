@@ -18,8 +18,6 @@
 
 //! Runtime API definition for assets.
 
-use polkadot_sdk::*;
-
 use codec::Codec;
 use sp_std::vec::Vec;
 

@@ -482,9 +482,9 @@ pub fn tranches_to_approve(
 mod tests {
 	use super::*;
 	use crate::{approval_db, BTreeMap};
+	use ::test_helpers::{dummy_candidate_receipt, dummy_hash};
 	use bitvec::{bitvec, order::Lsb0 as BitOrderLsb0, vec::BitVec};
 	use polkadot_primitives::GroupIndex;
-	use polkadot_primitives_test_helpers::{dummy_candidate_receipt, dummy_hash};
 
 	#[test]
 	fn pending_is_not_approved() {
@@ -1148,7 +1148,7 @@ mod tests {
 			}
 			.into();
 
-			// Populate the requested tranches. The assignments aren't inspected in
+			// Populate the requested tranches. The assignemnts aren't inspected in
 			// this test.
 			for &t in &test_tranche {
 				approval_entry.import_assignment(t, ValidatorIndex(0), 0)

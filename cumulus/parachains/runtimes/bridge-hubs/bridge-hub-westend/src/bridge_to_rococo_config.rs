@@ -23,12 +23,7 @@ use crate::{
 };
 use bp_messages::LaneId;
 use bp_parachains::SingleParaStoredHeaderDataBuilder;
-use bp_runtime::Chain;
 use bridge_runtime_common::{
-	extensions::refund_relayer_extension::{
-		ActualFeeRefund, RefundBridgedMessages, RefundSignedExtensionAdapter,
-		RefundableMessagesLane,
-	},
 	messages,
 	messages::{
 		source::{FromBridgedChainMessagesDeliveryProof, TargetHeaderChainAdapter},
@@ -39,6 +34,10 @@ use bridge_runtime_common::{
 		SenderAndLane, XcmAsPlainPayload, XcmBlobHauler, XcmBlobHaulerAdapter,
 		XcmBlobMessageDispatch, XcmVersionOfDestAndRemoteBridge,
 	},
+	refund_relayer_extension::{
+		ActualFeeRefund, RefundBridgedParachainMessages, RefundSignedExtensionAdapter,
+		RefundableMessagesLane, RefundableParachain,
+	},
 };
 use codec::Encode;
 use frame_support::{
@@ -48,7 +47,7 @@ use frame_support::{
 use sp_runtime::RuntimeDebug;
 use xcm::{
 	latest::prelude::*,
-	prelude::{InteriorLocation, NetworkId},
+	prelude::{InteriorMultiLocation, NetworkId},
 };
 use xcm_builder::BridgeBlobDispatcher;
 
@@ -63,17 +62,13 @@ parameter_types! {
 		bp_bridge_hub_westend::MAX_UNREWARDED_RELAYERS_IN_CONFIRMATION_TX;
 	pub const MaxUnconfirmedMessagesAtInboundLane: bp_messages::MessageNonce =
 		bp_bridge_hub_westend::MAX_UNCONFIRMED_MESSAGES_IN_CONFIRMATION_TX;
-	pub const BridgeHubRococoChainId: bp_runtime::ChainId = BridgeHubRococo::ID;
-	pub BridgeWestendToRococoMessagesPalletInstance: InteriorLocation = [PalletInstance(<BridgeRococoMessages as PalletInfoAccess>::index() as u8)].into();
+	pub const BridgeHubRococoChainId: bp_runtime::ChainId = bp_runtime::BRIDGE_HUB_ROCOCO_CHAIN_ID;
+	pub BridgeWestendToRococoMessagesPalletInstance: InteriorMultiLocation = X1(PalletInstance(<BridgeRococoMessages as PalletInfoAccess>::index() as u8));
 	pub RococoGlobalConsensusNetwork: NetworkId = NetworkId::Rococo;
-	pub RococoGlobalConsensusNetworkLocation: Location = Location::new(
-		2,
-		[GlobalConsensus(RococoGlobalConsensusNetwork::get())]
-	);
-	// see the `FEE_BOOST_PER_RELAY_HEADER` constant get the meaning of this value
-	pub PriorityBoostPerRelayHeader: u64 = 32_007_814_407_814;
-	// see the `FEE_BOOST_PER_PARACHAIN_HEADER` constant get the meaning of this value
-	pub PriorityBoostPerParachainHeader: u64 = 1_396_340_903_540_903;
+	pub RococoGlobalConsensusNetworkLocation: MultiLocation = MultiLocation {
+		parents: 2,
+		interior: X1(GlobalConsensus(RococoGlobalConsensusNetwork::get()))
+	};
 	// see the `FEE_BOOST_PER_MESSAGE` constant to get the meaning of this value
 	pub PriorityBoostPerMessage: u64 = 182_044_444_444_444;
 
@@ -84,26 +79,26 @@ parameter_types! {
 	pub ActiveOutboundLanesToBridgeHubRococo: &'static [bp_messages::LaneId] = &[XCM_LANE_FOR_ASSET_HUB_WESTEND_TO_ASSET_HUB_ROCOCO];
 	pub const AssetHubWestendToAssetHubRococoMessagesLane: bp_messages::LaneId = XCM_LANE_FOR_ASSET_HUB_WESTEND_TO_ASSET_HUB_ROCOCO;
 	pub FromAssetHubWestendToAssetHubRococoRoute: SenderAndLane = SenderAndLane::new(
-		ParentThen([Parachain(AssetHubWestendParaId::get().into())].into()).into(),
+		ParentThen(X1(Parachain(AssetHubWestendParaId::get().into()))).into(),
 		XCM_LANE_FOR_ASSET_HUB_WESTEND_TO_ASSET_HUB_ROCOCO,
 	);
-	pub ActiveLanes: sp_std::vec::Vec<(SenderAndLane, (NetworkId, InteriorLocation))> = sp_std::vec![
+	pub ActiveLanes: sp_std::vec::Vec<(SenderAndLane, (NetworkId, InteriorMultiLocation))> = sp_std::vec![
 			(
 				FromAssetHubWestendToAssetHubRococoRoute::get(),
-				(RococoGlobalConsensusNetwork::get(), [Parachain(AssetHubRococoParaId::get().into())].into())
+				(RococoGlobalConsensusNetwork::get(), X1(Parachain(AssetHubRococoParaId::get().into())))
 			)
 	];
 
 	pub CongestedMessage: Xcm<()> = build_congestion_message(true).into();
 	pub UncongestedMessage: Xcm<()> = build_congestion_message(false).into();
 
-	pub BridgeHubRococoLocation: Location = Location::new(
-		2,
-		[
+	pub BridgeHubRococoLocation: MultiLocation = MultiLocation {
+		parents: 2,
+		interior: X2(
 			GlobalConsensus(RococoGlobalConsensusNetwork::get()),
 			Parachain(<bp_bridge_hub_rococo::BridgeHubRococo as bp_runtime::Parachain>::PARACHAIN_ID)
-		]
-	);
+		)
+	};
 }
 pub const XCM_LANE_FOR_ASSET_HUB_WESTEND_TO_ASSET_HUB_ROCOCO: LaneId = LaneId([0, 0, 0, 2]);
 
@@ -167,6 +162,10 @@ impl MessageBridge for WithBridgeHubRococoMessageBridge {
 	>;
 }
 
+/// Message verifier for BridgeHubRococo messages sent from BridgeHubWestend
+type ToBridgeHubRococoMessageVerifier =
+	messages::source::FromThisChainMessageVerifier<WithBridgeHubRococoMessageBridge>;
+
 /// Maximal outbound payload size of BridgeHubWestend -> BridgeHubRococo messages.
 type ToBridgeHubRococoMaximalOutboundPayloadSize =
 	messages::source::FromThisChainMaximalOutboundPayloadSize<WithBridgeHubRococoMessageBridge>;
@@ -195,8 +194,9 @@ impl ThisChainWithMessages for BridgeHubWestend {
 
 /// Signed extension that refunds relayers that are delivering messages from the Rococo parachain.
 pub type OnBridgeHubWestendRefundBridgeHubRococoMessages = RefundSignedExtensionAdapter<
-	RefundBridgedMessages<
+	RefundBridgedParachainMessages<
 		Runtime,
+		RefundableParachain<BridgeParachainRococoInstance, bp_bridge_hub_rococo::BridgeHubRococo>,
 		RefundableMessagesLane<
 			WithBridgeHubRococoMessagesInstance,
 			AssetHubWestendToAssetHubRococoMessagesLane,
@@ -213,8 +213,7 @@ pub type BridgeGrandpaRococoInstance = pallet_bridge_grandpa::Instance1;
 impl pallet_bridge_grandpa::Config<BridgeGrandpaRococoInstance> for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type BridgedChain = bp_rococo::Rococo;
-	type MaxFreeHeadersPerBlock = ConstU32<4>;
-	type FreeHeadersInterval = ConstU32<5>;
+	type MaxFreeMandatoryHeadersPerBlock = ConstU32<4>;
 	type HeadersToKeep = RelayChainHeadersToKeep;
 	type WeightInfo = weights::pallet_bridge_grandpa::WeightInfo<Runtime>;
 }
@@ -250,6 +249,7 @@ impl pallet_bridge_messages::Config<WithBridgeHubRococoMessagesInstance> for Run
 	type DeliveryPayments = ();
 
 	type TargetHeaderChain = TargetHeaderChainAdapter<WithBridgeHubRococoMessageBridge>;
+	type LaneMessageVerifier = ToBridgeHubRococoMessageVerifier;
 	type DeliveryConfirmationPayments = pallet_bridge_relayers::DeliveryConfirmationPaymentsAdapter<
 		Runtime,
 		WithBridgeHubRococoMessagesInstance,
@@ -285,15 +285,13 @@ mod tests {
 	use super::*;
 	use bridge_runtime_common::{
 		assert_complete_bridge_types,
-		extensions::refund_relayer_extension::RefundableParachain,
 		integrity::{
 			assert_complete_bridge_constants, check_message_lane_weights,
 			AssertBridgeMessagesPalletConstants, AssertBridgePalletNames, AssertChainConstants,
 			AssertCompleteBridgeConstants,
 		},
 	};
-	use parachains_common::Balance;
-	use testnet_parachains_constants::westend;
+	use parachains_common::{westend, Balance};
 
 	/// Every additional message in the message delivery transaction boosts its priority.
 	/// So the priority of transaction with `N+1` messages is larger than priority of
@@ -305,11 +303,6 @@ mod tests {
 	/// We want this tip to be large enough (delivery transactions with more messages = less
 	/// operational costs and a faster bridge), so this value should be significant.
 	const FEE_BOOST_PER_MESSAGE: Balance = 2 * westend::currency::UNITS;
-
-	// see `FEE_BOOST_PER_MESSAGE` comment
-	const FEE_BOOST_PER_RELAY_HEADER: Balance = 2 * westend::currency::UNITS;
-	// see `FEE_BOOST_PER_MESSAGE` comment
-	const FEE_BOOST_PER_PARACHAIN_HEADER: Balance = 2 * westend::currency::UNITS;
 
 	#[test]
 	fn ensure_bridge_hub_westend_message_lane_weights_are_correct() {
@@ -344,14 +337,14 @@ mod tests {
 		>(AssertCompleteBridgeConstants {
 			this_chain_constants: AssertChainConstants {
 				block_length: bp_bridge_hub_westend::BlockLength::get(),
-				block_weights: bp_bridge_hub_westend::BlockWeightsForAsyncBacking::get(),
+				block_weights: bp_bridge_hub_westend::BlockWeights::get(),
 			},
 			messages_pallet_constants: AssertBridgeMessagesPalletConstants {
 				max_unrewarded_relayers_in_bridged_confirmation_tx:
 					bp_bridge_hub_rococo::MAX_UNREWARDED_RELAYERS_IN_CONFIRMATION_TX,
 				max_unconfirmed_messages_in_bridged_confirmation_tx:
 					bp_bridge_hub_rococo::MAX_UNCONFIRMED_MESSAGES_IN_CONFIRMATION_TX,
-				bridged_chain_id: BridgeHubRococo::ID,
+				bridged_chain_id: bp_runtime::BRIDGE_HUB_ROCOCO_CHAIN_ID,
 			},
 			pallet_names: AssertBridgePalletNames {
 				with_this_chain_messages_pallet_name:
@@ -362,19 +355,7 @@ mod tests {
 			},
 		});
 
-		bridge_runtime_common::extensions::priority_calculator::per_relay_header::ensure_priority_boost_is_sane::<
-			Runtime,
-			BridgeGrandpaRococoInstance,
-			PriorityBoostPerRelayHeader,
-		>(FEE_BOOST_PER_RELAY_HEADER);
-
-		bridge_runtime_common::extensions::priority_calculator::per_parachain_header::ensure_priority_boost_is_sane::<
-			Runtime,
-			RefundableParachain<WithBridgeHubRococoMessagesInstance, BridgeHubRococo>,
-			PriorityBoostPerParachainHeader,
-		>(FEE_BOOST_PER_PARACHAIN_HEADER);
-
-		bridge_runtime_common::extensions::priority_calculator::per_message::ensure_priority_boost_is_sane::<
+		bridge_runtime_common::priority_calculator::ensure_priority_boost_is_sane::<
 			Runtime,
 			WithBridgeHubRococoMessagesInstance,
 			PriorityBoostPerMessage,
@@ -382,9 +363,9 @@ mod tests {
 
 		assert_eq!(
 			BridgeWestendToRococoMessagesPalletInstance::get(),
-			[PalletInstance(
+			X1(PalletInstance(
 				bp_bridge_hub_westend::WITH_BRIDGE_WESTEND_TO_ROCOCO_MESSAGES_PALLET_INDEX
-			)]
+			))
 		);
 	}
 }

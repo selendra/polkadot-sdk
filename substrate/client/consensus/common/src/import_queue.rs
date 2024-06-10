@@ -64,7 +64,7 @@ pub type BoxJustificationImport<B> =
 	Box<dyn JustificationImport<B, Error = ConsensusError> + Send + Sync>;
 
 /// Maps to the RuntimeOrigin used by the network.
-pub type RuntimeOrigin = sc_network_types::PeerId;
+pub type RuntimeOrigin = libp2p_identity::PeerId;
 
 /// Block data used by the queue.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -133,7 +133,7 @@ pub trait ImportQueue<B: BlockT>: Send {
 	/// Start asynchronous runner for import queue.
 	///
 	/// Takes an object implementing [`Link`] which allows the import queue to
-	/// influence the synchronization process.
+	/// influece the synchronization process.
 	async fn run(self, link: Box<dyn Link<B>>);
 }
 

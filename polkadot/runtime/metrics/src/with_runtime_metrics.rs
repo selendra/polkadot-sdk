@@ -22,8 +22,8 @@
 
 const TRACING_TARGET: &'static str = "metrics";
 
-use codec::Encode;
-use polkadot_primitives::{
+use parity_scale_codec::Encode;
+use primitives::{
 	metric_definitions::{CounterDefinition, CounterVecDefinition, HistogramDefinition},
 	RuntimeMetricLabelValues, RuntimeMetricOp, RuntimeMetricUpdate,
 };

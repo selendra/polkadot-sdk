@@ -45,6 +45,8 @@ where
 		<Runtime as pallet_assets::Config<AssetInstance>>::AssetId,
 		<Runtime as pallet_assets::Config<AssetInstance>>::Balance,
 	>,
+	AccountIdOf<Runtime>:
+		From<polkadot_primitives::AccountId> + Into<polkadot_primitives::AccountId>,
 {
 	fn charge_weight_in_fungibles(
 		asset_id: <pallet_assets::Pallet<Runtime, AssetInstance> as Inspect<
@@ -64,36 +66,37 @@ where
 	}
 }
 
-/// Accepts an asset if it is a native asset from a particular `Location`.
-pub struct ConcreteNativeAssetFrom<LocationValue>(PhantomData<LocationValue>);
-impl<LocationValue: Get<Location>> ContainsPair<Asset, Location>
-	for ConcreteNativeAssetFrom<LocationValue>
+/// Accepts an asset if it is a native asset from a particular `MultiLocation`.
+pub struct ConcreteNativeAssetFrom<Location>(PhantomData<Location>);
+impl<Location: Get<MultiLocation>> ContainsPair<MultiAsset, MultiLocation>
+	for ConcreteNativeAssetFrom<Location>
 {
-	fn contains(asset: &Asset, origin: &Location) -> bool {
+	fn contains(asset: &MultiAsset, origin: &MultiLocation) -> bool {
 		log::trace!(target: "xcm::filter_asset_location",
 			"ConcreteNativeAsset asset: {:?}, origin: {:?}, location: {:?}",
-			asset, origin, LocationValue::get());
-		asset.id.0 == *origin && origin == &LocationValue::get()
+			asset, origin, Location::get());
+		matches!(asset.id, Concrete(ref id) if id == origin && origin == &Location::get())
 	}
 }
 
 pub struct RelayOrOtherSystemParachains<
-	SystemParachainMatcher: Contains<Location>,
+	SystemParachainMatcher: Contains<MultiLocation>,
 	Runtime: parachain_info::Config,
 > {
 	_runtime: PhantomData<(SystemParachainMatcher, Runtime)>,
 }
-impl<SystemParachainMatcher: Contains<Location>, Runtime: parachain_info::Config> Contains<Location>
-	for RelayOrOtherSystemParachains<SystemParachainMatcher, Runtime>
+impl<SystemParachainMatcher: Contains<MultiLocation>, Runtime: parachain_info::Config>
+	Contains<MultiLocation> for RelayOrOtherSystemParachains<SystemParachainMatcher, Runtime>
 {
-	fn contains(l: &Location) -> bool {
+	fn contains(l: &MultiLocation) -> bool {
 		let self_para_id: u32 = parachain_info::Pallet::<Runtime>::get().into();
-		if let (0, [Parachain(para_id)]) = l.unpack() {
+		if let MultiLocation { parents: 0, interior: X1(Parachain(para_id)) } = l {
 			if *para_id == self_para_id {
 				return false
 			}
 		}
-		matches!(l.unpack(), (1, [])) || SystemParachainMatcher::contains(l)
+		matches!(l, MultiLocation { parents: 1, interior: Here }) ||
+			SystemParachainMatcher::contains(l)
 	}
 }
 
@@ -102,12 +105,14 @@ impl<SystemParachainMatcher: Contains<Location>, Runtime: parachain_info::Config
 /// This structure can only be used at a parachain level. In the Relay Chain, please use
 /// the `xcm_builder::IsChildSystemParachain` matcher.
 pub struct AllSiblingSystemParachains;
-impl Contains<Location> for AllSiblingSystemParachains {
-	fn contains(l: &Location) -> bool {
+
+impl Contains<MultiLocation> for AllSiblingSystemParachains {
+	fn contains(l: &MultiLocation) -> bool {
 		log::trace!(target: "xcm::contains", "AllSiblingSystemParachains location: {:?}", l);
-		match l.unpack() {
+		match *l {
 			// System parachain
-			(1, [Parachain(id)]) => ParaId::from(*id).is_system(),
+			MultiLocation { parents: 1, interior: X1(Parachain(id)) } =>
+				ParaId::from(id).is_system(),
 			// Everything else
 			_ => false,
 		}
@@ -116,20 +121,21 @@ impl Contains<Location> for AllSiblingSystemParachains {
 
 /// Accepts an asset if it is a concrete asset from the system (Relay Chain or system parachain).
 pub struct ConcreteAssetFromSystem<AssetLocation>(PhantomData<AssetLocation>);
-impl<AssetLocation: Get<Location>> ContainsPair<Asset, Location>
+impl<AssetLocation: Get<MultiLocation>> ContainsPair<MultiAsset, MultiLocation>
 	for ConcreteAssetFromSystem<AssetLocation>
 {
-	fn contains(asset: &Asset, origin: &Location) -> bool {
+	fn contains(asset: &MultiAsset, origin: &MultiLocation) -> bool {
 		log::trace!(target: "xcm::contains", "ConcreteAssetFromSystem asset: {:?}, origin: {:?}", asset, origin);
-		let is_system = match origin.unpack() {
+		let is_system = match origin {
 			// The Relay Chain
-			(1, []) => true,
+			MultiLocation { parents: 1, interior: Here } => true,
 			// System parachain
-			(1, [Parachain(id)]) => ParaId::from(*id).is_system(),
+			MultiLocation { parents: 1, interior: X1(Parachain(id)) } =>
+				ParaId::from(*id).is_system(),
 			// Others
 			_ => false,
 		};
-		asset.id.0 == AssetLocation::get() && is_system
+		matches!(asset.id, Concrete(id) if id == AssetLocation::get()) && is_system
 	}
 }
 
@@ -138,9 +144,13 @@ impl<AssetLocation: Get<Location>> ContainsPair<Asset, Location>
 /// This type should only be used within the context of a parachain, since it does not verify that
 /// the parent is indeed a Relay Chain.
 pub struct ParentRelayOrSiblingParachains;
-impl Contains<Location> for ParentRelayOrSiblingParachains {
-	fn contains(location: &Location) -> bool {
-		matches!(location.unpack(), (1, []) | (1, [Parachain(_)]))
+impl Contains<MultiLocation> for ParentRelayOrSiblingParachains {
+	fn contains(location: &MultiLocation) -> bool {
+		matches!(
+			location,
+			MultiLocation { parents: 1, interior: Here } |
+				MultiLocation { parents: 1, interior: X1(Parachain(_)) }
+		)
 	}
 }
 
@@ -149,20 +159,20 @@ mod tests {
 	use frame_support::{parameter_types, traits::Contains};
 
 	use super::{
-		AllSiblingSystemParachains, Asset, ConcreteAssetFromSystem, ContainsPair, GeneralIndex,
-		Here, Location, PalletInstance, Parachain, Parent,
+		AllSiblingSystemParachains, ConcreteAssetFromSystem, ContainsPair, GeneralIndex, Here,
+		MultiAsset, MultiLocation, PalletInstance, Parachain, Parent,
 	};
 	use polkadot_primitives::LOWEST_PUBLIC_ID;
 	use xcm::latest::prelude::*;
 
 	parameter_types! {
-		pub const RelayLocation: Location = Location::parent();
+		pub const RelayLocation: MultiLocation = MultiLocation::parent();
 	}
 
 	#[test]
 	fn concrete_asset_from_relay_works() {
-		let expected_asset: Asset = (Parent, 1000000).into();
-		let expected_origin: Location = (Parent, Here).into();
+		let expected_asset: MultiAsset = (Parent, 1000000).into();
+		let expected_origin: MultiLocation = (Parent, Here).into();
 
 		assert!(<ConcreteAssetFromSystem<RelayLocation>>::contains(
 			&expected_asset,
@@ -172,12 +182,12 @@ mod tests {
 
 	#[test]
 	fn concrete_asset_from_sibling_system_para_fails_for_wrong_asset() {
-		let unexpected_assets: Vec<Asset> = vec![
+		let unexpected_assets: Vec<MultiAsset> = vec![
 			(Here, 1000000).into(),
 			((PalletInstance(50), GeneralIndex(1)), 1000000).into(),
 			((Parent, Parachain(1000), PalletInstance(50), GeneralIndex(1)), 1000000).into(),
 		];
-		let expected_origin: Location = (Parent, Parachain(1000)).into();
+		let expected_origin: MultiLocation = (Parent, Parachain(1000)).into();
 
 		unexpected_assets.iter().for_each(|asset| {
 			assert!(!<ConcreteAssetFromSystem<RelayLocation>>::contains(asset, &expected_origin));
@@ -196,10 +206,10 @@ mod tests {
 			(2001, false), // Not a System Parachain
 		];
 
-		let expected_asset: Asset = (Parent, 1000000).into();
+		let expected_asset: MultiAsset = (Parent, 1000000).into();
 
 		for (para_id, expected_result) in test_data {
-			let origin: Location = (Parent, Parachain(para_id)).into();
+			let origin: MultiLocation = (Parent, Parachain(para_id)).into();
 			assert_eq!(
 				expected_result,
 				<ConcreteAssetFromSystem<RelayLocation>>::contains(&expected_asset, &origin)
@@ -210,15 +220,15 @@ mod tests {
 	#[test]
 	fn all_sibling_system_parachains_works() {
 		// system parachain
-		assert!(AllSiblingSystemParachains::contains(&Location::new(1, [Parachain(1)])));
+		assert!(AllSiblingSystemParachains::contains(&MultiLocation::new(1, X1(Parachain(1)))));
 		// non-system parachain
-		assert!(!AllSiblingSystemParachains::contains(&Location::new(
+		assert!(!AllSiblingSystemParachains::contains(&MultiLocation::new(
 			1,
-			[Parachain(LOWEST_PUBLIC_ID.into())]
+			X1(Parachain(LOWEST_PUBLIC_ID.into()))
 		)));
 		// when used at relay chain
-		assert!(!AllSiblingSystemParachains::contains(&Location::new(0, [Parachain(1)])));
+		assert!(!AllSiblingSystemParachains::contains(&MultiLocation::new(0, X1(Parachain(1)))));
 		// when used with non-parachain
-		assert!(!AllSiblingSystemParachains::contains(&Location::new(1, [OnlyChild])));
+		assert!(!AllSiblingSystemParachains::contains(&MultiLocation::new(1, X1(OnlyChild))));
 	}
 }

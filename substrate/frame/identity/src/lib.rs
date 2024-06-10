@@ -161,7 +161,7 @@ pub mod pallet {
 		/// Structure holding information about an identity.
 		type IdentityInformation: IdentityInformationProvider;
 
-		/// Maximum number of registrars allowed in the system. Needed to bound the complexity
+		/// Maxmimum number of registrars allowed in the system. Needed to bound the complexity
 		/// of, e.g., updating judgements.
 		#[pallet::constant]
 		type MaxRegistrars: Get<u32>;
@@ -1116,7 +1116,8 @@ pub mod pallet {
 			if let Some(s) = signature {
 				// Account has pre-signed an authorization. Verify the signature provided and grant
 				// the username directly.
-				Self::validate_signature(&bounded_username[..], &s, &who)?;
+				let encoded = Encode::encode(&bounded_username.to_vec());
+				Self::validate_signature(&encoded, &s, &who)?;
 				Self::insert_username(&who, bounded_username);
 			} else {
 				// The user must accept the username, therefore, queue it.
@@ -1168,9 +1169,7 @@ pub mod pallet {
 		pub fn set_primary_username(origin: OriginFor<T>, username: Username<T>) -> DispatchResult {
 			// ensure `username` maps to `origin` (i.e. has already been set by an authority).
 			let who = ensure_signed(origin)?;
-			let account_of_username =
-				AccountOfUsername::<T>::get(&username).ok_or(Error::<T>::NoUsername)?;
-			ensure!(who == account_of_username, Error::<T>::InvalidUsername);
+			ensure!(AccountOfUsername::<T>::contains_key(&username), Error::<T>::NoUsername);
 			let (registration, _maybe_username) =
 				IdentityOf::<T>::get(&who).ok_or(Error::<T>::NoIdentity)?;
 			IdentityOf::<T>::insert(&who, (registration, Some(username.clone())));
@@ -1266,12 +1265,12 @@ impl<T: Config> Pallet<T> {
 
 	/// Validate a signature. Supports signatures on raw `data` or `data` wrapped in HTML `<Bytes>`.
 	pub fn validate_signature(
-		data: &[u8],
+		data: &Vec<u8>,
 		signature: &T::OffchainSignature,
 		signer: &T::AccountId,
 	) -> DispatchResult {
 		// Happy path, user has signed the raw data.
-		if signature.verify(data, &signer) {
+		if signature.verify(&data[..], &signer) {
 			return Ok(())
 		}
 		// NOTE: for security reasons modern UIs implicitly wrap the data requested to sign into
@@ -1396,21 +1395,16 @@ impl<T: Config> Pallet<T> {
 			},
 		)?;
 
-		let new_subs_deposit = if SubsOf::<T>::contains_key(&target) {
-			SubsOf::<T>::try_mutate(
-				&target,
-				|(current_subs_deposit, subs_of)| -> Result<BalanceOf<T>, DispatchError> {
-					let new_subs_deposit = Self::subs_deposit(subs_of.len() as u32);
-					Self::rejig_deposit(&target, *current_subs_deposit, new_subs_deposit)?;
-					*current_subs_deposit = new_subs_deposit;
-					Ok(new_subs_deposit)
-				},
-			)?
-		} else {
-			// If the item doesn't exist, there is no "old" deposit, and the new one is zero, so no
-			// need to call rejig, it'd just be zero -> zero.
-			Zero::zero()
-		};
+		// Subs Deposit
+		let new_subs_deposit = SubsOf::<T>::try_mutate(
+			&target,
+			|(current_subs_deposit, subs_of)| -> Result<BalanceOf<T>, DispatchError> {
+				let new_subs_deposit = Self::subs_deposit(subs_of.len() as u32);
+				Self::rejig_deposit(&target, *current_subs_deposit, new_subs_deposit)?;
+				*current_subs_deposit = new_subs_deposit;
+				Ok(new_subs_deposit)
+			},
+		)?;
 		Ok((new_id_deposit, new_subs_deposit))
 	}
 

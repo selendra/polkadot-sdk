@@ -33,14 +33,16 @@
 
 use futures::channel::oneshot;
 use polkadot_cli::{
+	prepared_overseer_builder,
 	service::{
-		AuxStore, Error, ExtendedOverseerGenArgs, Overseer, OverseerConnector, OverseerGen,
-		OverseerGenArgs, OverseerHandle,
+		AuthorityDiscoveryApi, AuxStore, BabeApi, Block, Error, HeaderBackend, Overseer,
+		OverseerConnector, OverseerGen, OverseerGenArgs, OverseerHandle, ParachainHost,
+		ProvideRuntimeApi,
 	},
-	validator_overseer_builder, Cli,
+	Cli,
 };
-use polkadot_node_subsystem::SpawnGlue;
-use polkadot_node_subsystem_types::{ChainApiBackend, OverseerSignal, RuntimeApiSubsystemClient};
+use polkadot_node_subsystem::{messages::ApprovalVotingMessage, SpawnGlue};
+use polkadot_node_subsystem_types::{DefaultSubsystemClient, OverseerSignal};
 use polkadot_node_subsystem_util::request_candidate_events;
 use polkadot_primitives::CandidateEvent;
 use sp_core::traits::SpawnNamed;
@@ -235,10 +237,13 @@ impl OverseerGen for DisputeFinalizedCandidates {
 		&self,
 		connector: OverseerConnector,
 		args: OverseerGenArgs<'_, Spawner, RuntimeClient>,
-		ext_args: Option<ExtendedOverseerGenArgs>,
-	) -> Result<(Overseer<SpawnGlue<Spawner>, Arc<RuntimeClient>>, OverseerHandle), Error>
+	) -> Result<
+		(Overseer<SpawnGlue<Spawner>, Arc<DefaultSubsystemClient<RuntimeClient>>>, OverseerHandle),
+		Error,
+	>
 	where
-		RuntimeClient: RuntimeApiSubsystemClient + ChainApiBackend + AuxStore + 'static,
+		RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,
+		RuntimeClient::Api: ParachainHost<Block> + BabeApi<Block> + AuthorityDiscoveryApi<Block>,
 		Spawner: 'static + SpawnNamed + Clone + Unpin,
 	{
 		gum::info!(
@@ -252,12 +257,9 @@ impl OverseerGen for DisputeFinalizedCandidates {
 			dispute_offset: self.dispute_offset,
 		};
 
-		validator_overseer_builder(
-			args,
-			ext_args.expect("Extended arguments required to build validator overseer are provided"),
-		)?
-		.replace_approval_voting(move |cb| InterceptedSubsystem::new(cb, ancestor_disputer))
-		.build_with_connector(connector)
-		.map_err(|e| e.into())
+		prepared_overseer_builder(args)?
+			.replace_approval_voting(move |cb| InterceptedSubsystem::new(cb, ancestor_disputer))
+			.build_with_connector(connector)
+			.map_err(|e| e.into())
 	}
 }

@@ -22,11 +22,12 @@ use std::{
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use codec::Encode;
+use parity_scale_codec::Encode;
 
 use sc_network::{
-	config::parse_addr, multiaddr::Multiaddr, service::traits::NetworkService, types::ProtocolName,
-	IfDisconnected, MessageSink, OutboundFailure, ReputationChange, RequestFailure,
+	config::parse_addr, multiaddr::Multiaddr, types::ProtocolName, IfDisconnected, MessageSink,
+	NetworkPeers, NetworkRequest, NetworkService, OutboundFailure, ReputationChange,
+	RequestFailure,
 };
 
 use polkadot_node_network_protocol::{
@@ -34,7 +35,7 @@ use polkadot_node_network_protocol::{
 	request_response::{OutgoingRequest, Recipient, ReqProtocolNames, Requests},
 	v1 as protocol_v1, v2 as protocol_v2, v3 as protocol_v3, PeerId,
 };
-use polkadot_primitives::AuthorityDiscoveryId;
+use polkadot_primitives::{AuthorityDiscoveryId, Block, Hash};
 
 use crate::{metrics::Metrics, validator_discovery::AuthorityDiscovery, WireMessage};
 
@@ -177,7 +178,7 @@ fn send_message<M>(
 	// network used `Bytes` this would not be necessary.
 	//
 	// peer may have gotten disconnect by the time `send_message()` is called
-	// at which point the sink is not available.
+	// at which point the the sink is not available.
 	let last_peer = peers.pop();
 	peers.into_iter().for_each(|peer| {
 		if let Some(sink) = notification_sinks.get(&(peer_set, peer)) {
@@ -231,13 +232,13 @@ pub trait Network: Clone + Send + 'static {
 }
 
 #[async_trait]
-impl Network for Arc<dyn NetworkService> {
+impl Network for Arc<NetworkService<Block, Hash>> {
 	async fn set_reserved_peers(
 		&mut self,
 		protocol: ProtocolName,
 		multiaddresses: HashSet<Multiaddr>,
 	) -> Result<(), String> {
-		<dyn NetworkService>::set_reserved_peers(&**self, protocol, multiaddresses)
+		NetworkService::set_reserved_peers(&**self, protocol, multiaddresses)
 	}
 
 	async fn remove_from_peers_set(
@@ -245,15 +246,15 @@ impl Network for Arc<dyn NetworkService> {
 		protocol: ProtocolName,
 		peers: Vec<PeerId>,
 	) -> Result<(), String> {
-		<dyn NetworkService>::remove_peers_from_reserved_set(&**self, protocol, peers)
+		NetworkService::remove_peers_from_reserved_set(&**self, protocol, peers)
 	}
 
 	fn report_peer(&self, who: PeerId, rep: ReputationChange) {
-		<dyn NetworkService>::report_peer(&**self, who, rep);
+		NetworkService::report_peer(&**self, who, rep);
 	}
 
 	fn disconnect_peer(&self, who: PeerId, protocol: ProtocolName) {
-		<dyn NetworkService>::disconnect_peer(&**self, who, protocol);
+		NetworkService::disconnect_peer(&**self, who, protocol);
 	}
 
 	async fn start_request<AD: AuthorityDiscovery>(
@@ -288,7 +289,7 @@ impl Network for Arc<dyn NetworkService> {
 						Ok(v) => v,
 						Err(_) => continue,
 					};
-					<dyn NetworkService>::add_known_address(&**self, peer_id, addr);
+					NetworkService::add_known_address(self, peer_id, addr);
 					found_peer_id = Some(peer_id);
 				}
 				found_peer_id
@@ -320,8 +321,8 @@ impl Network for Arc<dyn NetworkService> {
 			"Starting request",
 		);
 
-		<dyn NetworkService>::start_request(
-			&**self,
+		NetworkService::start_request(
+			self,
 			peer_id,
 			req_protocol_names.get_name(protocol),
 			payload,
@@ -332,7 +333,7 @@ impl Network for Arc<dyn NetworkService> {
 	}
 
 	fn peer_role(&self, who: PeerId, handshake: Vec<u8>) -> Option<sc_network::ObservedRole> {
-		<dyn NetworkService>::peer_role(&**self, who, handshake)
+		NetworkService::peer_role(self, who, handshake)
 	}
 }
 

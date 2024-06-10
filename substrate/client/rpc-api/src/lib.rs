@@ -25,7 +25,7 @@
 mod error;
 mod policy;
 
-pub use policy::{DenyUnsafe, UnsafeRpcError};
+pub use policy::DenyUnsafe;
 
 pub mod author;
 pub mod chain;

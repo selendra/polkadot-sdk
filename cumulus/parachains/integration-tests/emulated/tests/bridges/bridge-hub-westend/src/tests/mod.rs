@@ -13,37 +13,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::imports::*;
+use crate::*;
 
 mod asset_transfers;
 mod send_xcm;
 mod teleport;
 
-pub(crate) fn asset_hub_rococo_location() -> Location {
-	Location::new(
-		2,
-		[GlobalConsensus(NetworkId::Rococo), Parachain(AssetHubRococo::para_id().into())],
-	)
+pub(crate) fn asset_hub_rococo_location() -> MultiLocation {
+	MultiLocation {
+		parents: 2,
+		interior: X2(
+			GlobalConsensus(NetworkId::Rococo),
+			Parachain(AssetHubRococo::para_id().into()),
+		),
+	}
 }
 
-pub(crate) fn bridge_hub_rococo_location() -> Location {
-	Location::new(
-		2,
-		[GlobalConsensus(NetworkId::Rococo), Parachain(BridgeHubRococo::para_id().into())],
-	)
+pub(crate) fn bridge_hub_rococo_location() -> MultiLocation {
+	MultiLocation {
+		parents: 2,
+		interior: X2(
+			GlobalConsensus(NetworkId::Rococo),
+			Parachain(BridgeHubRococo::para_id().into()),
+		),
+	}
 }
 
 pub(crate) fn send_asset_from_asset_hub_westend(
-	destination: Location,
-	(id, amount): (Location, u128),
+	destination: MultiLocation,
+	(id, amount): (MultiLocation, u128),
 ) -> DispatchResult {
 	let signed_origin =
 		<AssetHubWestend as Chain>::RuntimeOrigin::signed(AssetHubWestendSender::get().into());
 
-	let beneficiary: Location =
+	let beneficiary: MultiLocation =
 		AccountId32Junction { network: None, id: AssetHubRococoReceiver::get().into() }.into();
 
-	let assets: Assets = (id, amount).into();
+	let assets: MultiAssets = (id, amount).into();
 	let fee_asset_item = 0;
 
 	AssetHubWestend::execute_with(|| {
@@ -67,7 +73,7 @@ pub(crate) fn assert_bridge_hub_westend_message_accepted(expected_processed: boo
 				BridgeHubWestend,
 				vec![
 					// pay for bridge fees
-					RuntimeEvent::Balances(pallet_balances::Event::Burned { .. }) => {},
+					RuntimeEvent::Balances(pallet_balances::Event::Withdraw { .. }) => {},
 					// message exported
 					RuntimeEvent::BridgeRococoMessages(
 						pallet_bridge_messages::Event::MessageAccepted { .. }

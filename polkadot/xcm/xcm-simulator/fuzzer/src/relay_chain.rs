@@ -23,12 +23,8 @@ use frame_support::{
 };
 
 use frame_system::EnsureRoot;
-use sp_core::ConstU32;
-use sp_runtime::{
-	generic,
-	traits::{BlakeTwo256, IdentifyAccount, Verify},
-	MultiAddress, MultiSignature,
-};
+use sp_core::{ConstU32, H256};
+use sp_runtime::{traits::IdentityLookup, AccountId32};
 
 use polkadot_parachain_primitives::primitives::Id as ParaId;
 use polkadot_runtime_parachains::{
@@ -37,37 +33,48 @@ use polkadot_runtime_parachains::{
 	origin, shared,
 };
 use xcm::latest::prelude::*;
+#[allow(deprecated)]
+use xcm_builder::CurrencyAdapter as XcmCurrencyAdapter;
 use xcm_builder::{
 	AccountId32Aliases, AllowUnpaidExecutionFrom, ChildParachainAsNative,
 	ChildParachainConvertsVia, ChildSystemParachainAsSuperuser, FixedRateOfFungible,
-	FixedWeightBounds, FrameTransactionalProcessor, FungibleAdapter, IsConcrete,
-	SignedAccountId32AsNative, SignedToAccountId32, SovereignSignedViaLocation,
+	FixedWeightBounds, IsConcrete, SignedAccountId32AsNative, SignedToAccountId32,
+	SovereignSignedViaLocation,
 };
 use xcm_executor::{Config, XcmExecutor};
 
-pub type SignedExtra = (frame_system::CheckNonZeroSender<Runtime>,);
-
-pub type BlockNumber = u64;
-pub type Address = MultiAddress<AccountId, ()>;
-pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
-pub type UncheckedExtrinsic =
-	generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
-pub type Block = generic::Block<Header, UncheckedExtrinsic>;
-
-pub type Signature = MultiSignature;
-pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
+pub type AccountId = AccountId32;
 pub type Balance = u128;
 
 parameter_types! {
-	pub const BlockHashCount: u32 = 250;
+	pub const BlockHashCount: u64 = 250;
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
+	type RuntimeOrigin = RuntimeOrigin;
+	type RuntimeCall = RuntimeCall;
+	type Nonce = u64;
+	type Hash = H256;
+	type Hashing = ::sp_runtime::traits::BlakeTwo256;
 	type AccountId = AccountId;
-	type Lookup = sp_runtime::traits::AccountIdLookup<AccountId, ()>;
+	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = BlockHashCount;
+	type BlockWeights = ();
+	type BlockLength = ();
+	type Version = ();
+	type PalletInfo = PalletInfo;
 	type AccountData = pallet_balances::AccountData<Balance>;
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type DbWeight = ();
+	type BaseCallFilter = Everything;
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 parameter_types! {
@@ -89,29 +96,29 @@ impl pallet_balances::Config for Runtime {
 	type RuntimeHoldReason = RuntimeHoldReason;
 	type RuntimeFreezeReason = RuntimeFreezeReason;
 	type FreezeIdentifier = ();
+	type MaxHolds = ConstU32<0>;
 	type MaxFreezes = ConstU32<0>;
 }
 
-impl shared::Config for Runtime {
-	type DisabledValidators = ();
-}
+impl shared::Config for Runtime {}
 
 impl configuration::Config for Runtime {
 	type WeightInfo = configuration::TestWeightInfo;
 }
 
 parameter_types! {
-	pub const TokenLocation: Location = Here.into_location();
+	pub const TokenLocation: MultiLocation = Here.into_location();
 	pub const ThisNetwork: NetworkId = NetworkId::ByGenesis([0; 32]);
 	pub const AnyNetwork: Option<NetworkId> = None;
-	pub UniversalLocation: InteriorLocation = ThisNetwork::get().into();
+	pub const UniversalLocation: InteriorMultiLocation = Here;
 }
 
 pub type SovereignAccountOf =
 	(ChildParachainConvertsVia<ParaId, AccountId>, AccountId32Aliases<ThisNetwork, AccountId>);
 
+#[allow(deprecated)]
 pub type LocalAssetTransactor =
-	FungibleAdapter<Balances, IsConcrete<TokenLocation>, SovereignAccountOf, AccountId, ()>;
+	XcmCurrencyAdapter<Balances, IsConcrete<TokenLocation>, SovereignAccountOf, AccountId, ()>;
 
 type LocalOriginConverter = (
 	SovereignSignedViaLocation<SovereignAccountOf, RuntimeOrigin>,
@@ -122,7 +129,7 @@ type LocalOriginConverter = (
 
 parameter_types! {
 	pub const BaseXcmWeight: Weight = Weight::from_parts(1_000, 1_000);
-	pub KsmPerSecondPerByte: (AssetId, u128, u128) = (AssetId(TokenLocation::get()), 1, 1);
+	pub KsmPerSecondPerByte: (AssetId, u128, u128) = (Concrete(TokenLocation::get()), 1, 1);
 	pub const MaxInstructions: u32 = u32::MAX;
 	pub const MaxAssetsIntoHolding: u32 = 64;
 }
@@ -156,11 +163,6 @@ impl Config for XcmConfig {
 	type CallDispatcher = RuntimeCall;
 	type SafeCallFilter = Everything;
 	type Aliasers = Nothing;
-	type TransactionalProcessor = FrameTransactionalProcessor;
-	type HrmpNewChannelOpenRequestHandler = ();
-	type HrmpChannelAcceptedHandler = ();
-	type HrmpChannelClosingHandler = ();
-	type XcmRecorder = ();
 }
 
 pub type LocalOriginToLocation = SignedToAccountId32<RuntimeOrigin, AccountId, ThisNetwork>;
@@ -192,7 +194,13 @@ impl pallet_xcm::Config for Runtime {
 	type AdminOrigin = EnsureRoot<AccountId>;
 }
 
+parameter_types! {
+	pub const FirstMessageFactorPercent: u64 = 100;
+}
+
 impl origin::Config for Runtime {}
+
+type Block = frame_system::mocking::MockBlock<Runtime>;
 
 parameter_types! {
 	/// Amount of weight that can be spent per block to service messages.
@@ -229,7 +237,6 @@ impl pallet_message_queue::Config for Runtime {
 	type HeapSize = MessageQueueHeapSize;
 	type MaxStale = MessageQueueMaxStale;
 	type ServiceWeight = MessageQueueServiceWeight;
-	type IdleMaxServiceWeight = ();
 	#[cfg(not(feature = "runtime-benchmarks"))]
 	type MessageProcessor = MessageProcessor;
 	#[cfg(feature = "runtime-benchmarks")]
@@ -243,10 +250,10 @@ impl pallet_message_queue::Config for Runtime {
 construct_runtime!(
 	pub enum Runtime
 	{
-		System: frame_system,
-		Balances: pallet_balances,
-		ParasOrigin: origin,
-		XcmPallet: pallet_xcm,
-		MessageQueue: pallet_message_queue,
+		System: frame_system::{Pallet, Call, Storage, Config<T>, Event<T>},
+		Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
+		ParasOrigin: origin::{Pallet, Origin},
+		XcmPallet: pallet_xcm::{Pallet, Call, Storage, Event<T>, Origin},
+		MessageQueue: pallet_message_queue::{Pallet, Event<T>},
 	}
 );

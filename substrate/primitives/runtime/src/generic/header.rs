@@ -133,7 +133,7 @@ where
 impl<Number, Hash> Header<Number, Hash>
 where
 	Number: Member
-		+ core::hash::Hash
+		+ sp_std::hash::Hash
 		+ Copy
 		+ MaybeDisplay
 		+ AtLeast32BitUnsigned

@@ -21,7 +21,6 @@
 // curve may be excluded by the build we resort to `#[allow(unused)]` to
 // suppress the expected warning.
 
-use alloc::vec::Vec;
 use ark_ec::{
 	pairing::{MillerLoopOutput, Pairing},
 	short_weierstrass::{Affine as SWAffine, Projective as SWProjective, SWCurveConfig},
@@ -32,6 +31,7 @@ use ark_scale::{
 	ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate},
 	scale::{Decode, Encode},
 };
+use sp_std::vec::Vec;
 
 // SCALE encoding parameters shared by all the enabled modules
 const SCALE_USAGE: u8 = ark_scale::make_usage(Compress::No, Validate::No);

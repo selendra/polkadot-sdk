@@ -19,10 +19,9 @@
 
 use super::node_header::{NodeHeader, NodeKind};
 use crate::{error::Error, trie_constants};
-use alloc::{borrow::Borrow, vec::Vec};
 use codec::{Compact, Decode, Encode, Input};
-use core::{marker::PhantomData, ops::Range};
 use hash_db::Hasher;
+use sp_std::{borrow::Borrow, marker::PhantomData, ops::Range, vec::Vec};
 use trie_db::{
 	nibble_ops,
 	node::{NibbleSlicePlan, NodeHandlePlan, NodePlan, Value, ValuePlan},
@@ -31,7 +30,7 @@ use trie_db::{
 
 /// Helper struct for trie node decoder. This implements `codec::Input` on a byte slice, while
 /// tracking the absolute position. This is similar to `std::io::Cursor` but does not implement
-/// `Read` and `io` are not in `core` or `alloc`.
+/// `Read` and `io` is not in `sp-std`.
 struct ByteSliceInput<'a> {
 	data: &'a [u8],
 	offset: usize,

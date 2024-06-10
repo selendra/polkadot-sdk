@@ -14,12 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::{
-	pallet::CurrentMigration, Config, Pallet, VersionMigrationStage, VersionNotifyTargets,
-};
+use crate::{Config, Pallet, VersionNotifyTargets};
 use frame_support::{
 	pallet_prelude::*,
-	traits::{OnRuntimeUpgrade, StorageVersion, UncheckedOnRuntimeUpgrade},
+	traits::{OnRuntimeUpgrade, StorageVersion},
 	weights::Weight,
 };
 
@@ -35,7 +33,7 @@ pub mod v1 {
 	///
 	/// Use experimental [`MigrateToV1`] instead.
 	pub struct VersionUncheckedMigrateToV1<T>(sp_std::marker::PhantomData<T>);
-	impl<T: Config> UncheckedOnRuntimeUpgrade for VersionUncheckedMigrateToV1<T> {
+	impl<T: Config> OnRuntimeUpgrade for VersionUncheckedMigrateToV1<T> {
 		fn on_runtime_upgrade() -> Weight {
 			let mut weight = T::DbWeight::get().reads(1);
 
@@ -74,17 +72,4 @@ pub mod v1 {
 		crate::pallet::Pallet<T>,
 		<T as frame_system::Config>::DbWeight,
 	>;
-}
-
-/// When adding a new XCM version, we need to run this migration for `pallet_xcm` to ensure that all
-/// previously stored data with subkey prefix `XCM_VERSION-1` (and below) are migrated to the
-/// `XCM_VERSION`.
-///
-/// NOTE: This migration can be permanently added to the runtime migrations.
-pub struct MigrateToLatestXcmVersion<T>(sp_std::marker::PhantomData<T>);
-impl<T: Config> OnRuntimeUpgrade for MigrateToLatestXcmVersion<T> {
-	fn on_runtime_upgrade() -> Weight {
-		CurrentMigration::<T>::put(VersionMigrationStage::default());
-		T::DbWeight::get().writes(1)
-	}
 }

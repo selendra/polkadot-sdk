@@ -38,7 +38,6 @@ macro_rules! hash_fn {
 
 // TODO remove cfg once used by all targets
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
 fn extract_from_slice(output: &mut &mut [u8], new_len: usize) {
 	debug_assert!(new_len <= output.len());
 	let tmp = core::mem::take(output);
@@ -46,8 +45,7 @@ fn extract_from_slice(output: &mut &mut [u8], new_len: usize) {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
-fn ptr_len_or_sentinel(data: &mut Option<&mut &mut [u8]>) -> (*mut u8, u32) {
+fn ptr_len_or_sentinel(data: &mut Option<&mut [u8]>) -> (*mut u8, u32) {
 	match data {
 		Some(ref mut data) => (data.as_mut_ptr(), data.len() as _),
 		None => (crate::SENTINEL as _, 0),
@@ -55,7 +53,6 @@ fn ptr_len_or_sentinel(data: &mut Option<&mut &mut [u8]>) -> (*mut u8, u32) {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
 fn ptr_or_sentinel(data: &Option<&[u8]>) -> *const u8 {
 	match data {
 		Some(ref data) => data.as_ptr(),
@@ -93,7 +90,7 @@ pub trait HostFn {
 	/// - `output`: A reference to the output data buffer to write the address.
 	fn address(output: &mut &mut [u8]);
 
-	/// Lock a new delegate dependency to the contract.
+	/// Adds a new delegate dependency to the contract.
 	///
 	/// Traps if the maximum number of delegate_dependencies is reached or if
 	/// the delegate dependency already exists.
@@ -102,7 +99,10 @@ pub trait HostFn {
 	///
 	/// - `code_hash`: The code hash of the dependency. Should be decodable as an `T::Hash`. Traps
 	///   otherwise.
-	fn lock_delegate_dependency(code_hash: &[u8]);
+	#[deprecated(
+		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
+	)]
+	fn add_delegate_dependency(code_hash: &[u8]);
 
 	/// Stores the *free* balance of the current account into the supplied buffer.
 	///
@@ -132,21 +132,20 @@ pub trait HostFn {
 		gas: u64,
 		value: &[u8],
 		input_data: &[u8],
-		output: Option<&mut &mut [u8]>,
+		output: Option<&mut [u8]>,
 	) -> Result;
 
 	/// Make a call to another contract.
 	///
 	/// Equivalent to the newer [`Self::call_v2`] version but works with
 	/// *ref_time* Weight only
-	#[deprecated(note = "Deprecated, use newer version instead")]
 	fn call_v1(
 		flags: CallFlags,
 		callee: &[u8],
 		gas: u64,
 		value: &[u8],
 		input_data: &[u8],
-		output: Option<&mut &mut [u8]>,
+		output: Option<&mut [u8]>,
 	) -> Result;
 
 	/// Call (possibly transferring some amount of funds) into the specified account.
@@ -176,15 +175,18 @@ pub trait HostFn {
 	/// - [CalleeTrapped][`crate::ReturnErrorCode::CalleeTrapped]
 	/// - [TransferFailed][`crate::ReturnErrorCode::TransferFailed]
 	/// - [NotCallable][`crate::ReturnErrorCode::NotCallable]
+	#[deprecated(
+		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
+	)]
 	fn call_v2(
 		flags: CallFlags,
 		callee: &[u8],
 		ref_time_limit: u64,
-		proof_size_limit: u64,
+		proof_time_limit: u64,
 		deposit: Option<&[u8]>,
 		value: &[u8],
 		input_data: &[u8],
-		output: Option<&mut &mut [u8]>,
+		output: Option<&mut [u8]>,
 	) -> Result;
 
 	/// Call into the chain extension provided by the chain if any.
@@ -209,7 +211,7 @@ pub trait HostFn {
 	/// # Return
 	///
 	/// The chain extension returned value, if executed successfully.
-	fn call_chain_extension(func_id: u32, input: &[u8], output: Option<&mut &mut [u8]>) -> u32;
+	fn call_chain_extension(func_id: u32, input: &[u8], output: Option<&mut [u8]>) -> u32;
 
 	/// Call some dispatchable of the runtime.
 	///
@@ -272,6 +274,9 @@ pub trait HostFn {
 	///
 	/// A return value of `true` indicates that this contract is being called by a root origin,
 	/// and `false` indicates that the caller is a signed origin.
+	#[deprecated(
+		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
+	)]
 	fn caller_is_root() -> u32;
 
 	/// Clear the value at the given key in the contract storage.
@@ -369,7 +374,7 @@ pub trait HostFn {
 		flags: CallFlags,
 		code_hash: &[u8],
 		input_data: &[u8],
-		output: Option<&mut &mut [u8]>,
+		output: Option<&mut [u8]>,
 	) -> Result;
 
 	/// Deposit a contract event with the data buffer and optional list of topics. There is a limit
@@ -475,14 +480,13 @@ pub trait HostFn {
 	///
 	/// Equivalent to the newer [`Self::instantiate_v2`] version but works
 	/// with *ref_time* Weight only.
-	#[deprecated(note = "Deprecated, use newer version instead")]
 	fn instantiate_v1(
 		code_hash: &[u8],
 		gas: u64,
 		value: &[u8],
 		input: &[u8],
-		address: Option<&mut &mut [u8]>,
-		output: Option<&mut &mut [u8]>,
+		address: Option<&mut [u8]>,
+		output: Option<&mut [u8]>,
 		salt: &[u8],
 	) -> Result;
 
@@ -520,6 +524,9 @@ pub trait HostFn {
 	/// - [CalleeTrapped][`crate::ReturnErrorCode::CalleeTrapped]
 	/// - [TransferFailed][`crate::ReturnErrorCode::TransferFailed]
 	/// - [CodeNotFound][`crate::ReturnErrorCode::CodeNotFound]
+	#[deprecated(
+		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
+	)]
 	fn instantiate_v2(
 		code_hash: &[u8],
 		ref_time_limit: u64,
@@ -527,8 +534,8 @@ pub trait HostFn {
 		deposit: Option<&[u8]>,
 		value: &[u8],
 		input: &[u8],
-		address: Option<&mut &mut [u8]>,
-		output: Option<&mut &mut [u8]>,
+		address: Option<&mut [u8]>,
+		output: Option<&mut [u8]>,
 		salt: &[u8],
 	) -> Result;
 
@@ -595,7 +602,10 @@ pub trait HostFn {
 	///
 	/// - `code_hash`: The code hash of the dependency. Should be decodable as an `T::Hash`. Traps
 	///   otherwise.
-	fn unlock_delegate_dependency(code_hash: &[u8]);
+	#[deprecated(
+		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
+	)]
+	fn remove_delegate_dependency(code_hash: &[u8]);
 
 	/// Cease contract execution and save a data buffer as a result of the execution.
 	///
@@ -782,7 +792,7 @@ pub trait HostFn {
 	#[deprecated(
 		note = "Unstable function. Behaviour can change without further notice. Use only for testing."
 	)]
-	fn xcm_execute(msg: &[u8]) -> Result;
+	fn xcm_execute(msg: &[u8], output: &mut &mut [u8]) -> Result;
 
 	/// Send an XCM program from the contract to the specified destination.
 	/// This is equivalent to dispatching `pallet_xcm::send` through `call_runtime`, except that
@@ -790,10 +800,11 @@ pub trait HostFn {
 	///
 	/// # Parameters
 	///
-	/// - `dest`: The XCM destination, should be decodable as [VersionedLocation](https://paritytech.github.io/polkadot-sdk/master/staging_xcm/enum.VersionedLocation.html),
+	/// - `dest`: The XCM destination, should be decodable as [VersionedMultiLocation](https://paritytech.github.io/polkadot-sdk/master/staging_xcm/enum.VersionedMultiLocation.html),
 	///   traps otherwise.
 	/// - `msg`: The message, should be decodable as a [VersionedXcm](https://paritytech.github.io/polkadot-sdk/master/staging_xcm/enum.VersionedXcm.html),
 	///   traps otherwise.
+	/// - `output`: A reference to the output data buffer to write the [XcmHash](https://paritytech.github.io/polkadot-sdk/master/staging_xcm/v3/type.XcmHash.html)
 	///
 	/// # Return
 	///

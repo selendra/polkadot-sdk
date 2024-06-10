@@ -54,21 +54,15 @@ use polkadot_node_subsystem_util::{
 	TimeoutExt,
 };
 use polkadot_primitives::{
-	ApprovalVoteMultipleCandidates, ApprovalVotingParams, BlockNumber, CandidateHash,
-	CandidateIndex, CandidateReceipt, CoreIndex, DisputeStatement, ExecutorParams, GroupIndex,
-	Hash, PvfExecKind, SessionIndex, SessionInfo, ValidDisputeStatementKind, ValidatorId,
-	ValidatorIndex, ValidatorPair, ValidatorSignature,
+	vstaging::{ApprovalVoteMultipleCandidates, ApprovalVotingParams},
+	BlockNumber, CandidateHash, CandidateIndex, CandidateReceipt, DisputeStatement, ExecutorParams,
+	GroupIndex, Hash, PvfExecKind, SessionIndex, SessionInfo, ValidDisputeStatementKind,
+	ValidatorId, ValidatorIndex, ValidatorPair, ValidatorSignature,
 };
 use sc_keystore::LocalKeystore;
 use sp_application_crypto::Pair;
 use sp_consensus::SyncOracle;
 use sp_consensus_slots::Slot;
-use std::time::Instant;
-
-// The max number of blocks we keep track of assignments gathering times. Normally,
-// this would never be reached because we prune the data on finalization, but we need
-// to also ensure the data is not growing unecessarily large.
-const MAX_BLOCKS_WITH_ASSIGNMENT_TIMESTAMPS: u32 = 100;
 
 use futures::{
 	channel::oneshot,
@@ -98,11 +92,11 @@ use time::{slot_number_to_tick, Clock, ClockExt, DelayedApprovalTimer, SystemClo
 mod approval_checking;
 pub mod approval_db;
 mod backend;
-pub mod criteria;
+mod criteria;
 mod import;
 mod ops;
 mod persisted_entries;
-pub mod time;
+mod time;
 
 use crate::{
 	approval_checking::{Check, TranchesToApproveResult},
@@ -165,7 +159,6 @@ pub struct ApprovalVotingSubsystem {
 	db: Arc<dyn Database>,
 	mode: Mode,
 	metrics: Metrics,
-	clock: Box<dyn Clock + Send + Sync>,
 }
 
 #[derive(Clone)]
@@ -188,14 +181,6 @@ struct MetricsInner {
 	time_recover_and_approve: prometheus::Histogram,
 	candidate_signatures_requests_total: prometheus::Counter<prometheus::U64>,
 	unapproved_candidates_in_unfinalized_chain: prometheus::Gauge<prometheus::U64>,
-	// The time it takes in each stage to gather enough assignments.
-	// We defined a `stage` as being the entire process of gathering enough assignments to
-	// be able to approve a candidate:
-	// E.g:
-	// - Stage 0: We wait for the needed_approvals assignments to be gathered.
-	// - Stage 1: We wait for enough tranches to cover all no-shows in stage 0.
-	// - Stage 2: We wait for enough tranches to cover all no-shows  of stage 1.
-	assignments_gathering_time_by_stage: prometheus::HistogramVec,
 }
 
 /// Approval Voting metrics.
@@ -314,20 +299,6 @@ impl Metrics {
 	fn on_unapproved_candidates_in_unfinalized_chain(&self, count: usize) {
 		if let Some(metrics) = &self.0 {
 			metrics.unapproved_candidates_in_unfinalized_chain.set(count as u64);
-		}
-	}
-
-	pub fn observe_assignment_gathering_time(&self, stage: usize, elapsed_as_millis: usize) {
-		if let Some(metrics) = &self.0 {
-			let stage_string = stage.to_string();
-			// We don't want to have too many metrics entries with this label to not put unncessary
-			// pressure on the metrics infrastructure, so we cap the stage at 10, which is
-			// equivalent to having already a finalization lag to 10 * no_show_slots, so it should
-			// be more than enough.
-			metrics
-				.assignments_gathering_time_by_stage
-				.with_label_values(&[if stage < 10 { stage_string.as_str() } else { "inf" }])
-				.observe(elapsed_as_millis as f64);
 		}
 	}
 }
@@ -459,17 +430,6 @@ impl metrics::Metrics for Metrics {
 				)?,
 				registry,
 			)?,
-			assignments_gathering_time_by_stage: prometheus::register(
-				prometheus::HistogramVec::new(
-					prometheus::HistogramOpts::new(
-						"polkadot_parachain_assignments_gather_time_by_stage_ms",
-						"The time in ms it takes for each stage to gather enough assignments needed for approval",
-					)
-					.buckets(vec![0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0, 32000.0]),
-					&["stage"],
-				)?,
-				registry,
-			)?,
 		};
 
 		Ok(Metrics(Some(metrics)))
@@ -485,25 +445,6 @@ impl ApprovalVotingSubsystem {
 		sync_oracle: Box<dyn SyncOracle + Send>,
 		metrics: Metrics,
 	) -> Self {
-		ApprovalVotingSubsystem::with_config_and_clock(
-			config,
-			db,
-			keystore,
-			sync_oracle,
-			metrics,
-			Box::new(SystemClock {}),
-		)
-	}
-
-	/// Create a new approval voting subsystem with the given keystore, config, and database.
-	pub fn with_config_and_clock(
-		config: Config,
-		db: Arc<dyn Database>,
-		keystore: Arc<LocalKeystore>,
-		sync_oracle: Box<dyn SyncOracle + Send>,
-		metrics: Metrics,
-		clock: Box<dyn Clock + Send + Sync>,
-	) -> Self {
 		ApprovalVotingSubsystem {
 			keystore,
 			slot_duration_millis: config.slot_duration_millis,
@@ -511,7 +452,6 @@ impl ApprovalVotingSubsystem {
 			db_config: DatabaseConfig { col_approval_data: config.col_approval_data },
 			mode: Mode::Syncing(sync_oracle),
 			metrics,
-			clock,
 		}
 	}
 
@@ -553,10 +493,15 @@ fn db_sanity_check(db: Arc<dyn Database>, config: DatabaseConfig) -> SubsystemRe
 impl<Context: Send> ApprovalVotingSubsystem {
 	fn start(self, ctx: Context) -> SpawnedSubsystem {
 		let backend = DbBackend::new(self.db.clone(), self.db_config);
-		let future =
-			run::<DbBackend, Context>(ctx, self, Box::new(RealAssignmentCriteria), backend)
-				.map_err(|e| SubsystemError::with_origin("approval-voting", e))
-				.boxed();
+		let future = run::<DbBackend, Context>(
+			ctx,
+			self,
+			Box::new(SystemClock),
+			Box::new(RealAssignmentCriteria),
+			backend,
+		)
+		.map_err(|e| SubsystemError::with_origin("approval-voting", e))
+		.boxed();
 
 		SpawnedSubsystem { name: "approval-voting-subsystem", future }
 	}
@@ -827,28 +772,6 @@ struct State {
 	clock: Box<dyn Clock + Send + Sync>,
 	assignment_criteria: Box<dyn AssignmentCriteria + Send + Sync>,
 	spans: HashMap<Hash, jaeger::PerLeafSpan>,
-	// Per block, candidate records about how long we take until we gather enough
-	// assignments, this is relevant because it gives us a good idea about how many
-	// tranches we trigger and why.
-	per_block_assignments_gathering_times:
-		LruMap<BlockNumber, HashMap<(Hash, CandidateHash), AssignmentGatheringRecord>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AssignmentGatheringRecord {
-	// The stage we are in.
-	// Candidate assignment gathering goes in stages, first we wait for needed_approvals(stage 0)
-	// Then if we have no-shows, we move into stage 1 and wait for enough tranches to cover all
-	// no-shows.
-	stage: usize,
-	// The time we started the stage.
-	stage_start: Option<Instant>,
-}
-
-impl Default for AssignmentGatheringRecord {
-	fn default() -> Self {
-		AssignmentGatheringRecord { stage: 0, stage_start: Some(Instant::now()) }
-	}
 }
 
 #[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
@@ -954,96 +877,6 @@ impl State {
 			},
 		}
 	}
-
-	fn mark_begining_of_gathering_assignments(
-		&mut self,
-		block_number: BlockNumber,
-		block_hash: Hash,
-		candidate: CandidateHash,
-	) {
-		if let Some(record) = self
-			.per_block_assignments_gathering_times
-			.get_or_insert(block_number, HashMap::new)
-			.and_then(|records| Some(records.entry((block_hash, candidate)).or_default()))
-		{
-			if record.stage_start.is_none() {
-				record.stage += 1;
-				gum::debug!(
-					target: LOG_TARGET,
-					stage = ?record.stage,
-					?block_hash,
-					?candidate,
-					"Started a new assignment gathering stage",
-				);
-				record.stage_start = Some(Instant::now());
-			}
-		}
-	}
-
-	fn mark_gathered_enough_assignments(
-		&mut self,
-		block_number: BlockNumber,
-		block_hash: Hash,
-		candidate: CandidateHash,
-	) -> AssignmentGatheringRecord {
-		let record = self
-			.per_block_assignments_gathering_times
-			.get(&block_number)
-			.and_then(|entry| entry.get_mut(&(block_hash, candidate)));
-		let stage = record.as_ref().map(|record| record.stage).unwrap_or_default();
-		AssignmentGatheringRecord {
-			stage,
-			stage_start: record.and_then(|record| record.stage_start.take()),
-		}
-	}
-
-	fn cleanup_assignments_gathering_timestamp(&mut self, remove_lower_than: BlockNumber) {
-		while let Some((block_number, _)) = self.per_block_assignments_gathering_times.peek_oldest()
-		{
-			if *block_number < remove_lower_than {
-				self.per_block_assignments_gathering_times.pop_oldest();
-			} else {
-				break
-			}
-		}
-	}
-
-	fn observe_assignment_gathering_status(
-		&mut self,
-		metrics: &Metrics,
-		required_tranches: &RequiredTranches,
-		block_hash: Hash,
-		block_number: BlockNumber,
-		candidate_hash: CandidateHash,
-	) {
-		match required_tranches {
-			RequiredTranches::All | RequiredTranches::Pending { .. } => {
-				self.mark_begining_of_gathering_assignments(
-					block_number,
-					block_hash,
-					candidate_hash,
-				);
-			},
-			RequiredTranches::Exact { .. } => {
-				let time_to_gather =
-					self.mark_gathered_enough_assignments(block_number, block_hash, candidate_hash);
-				if let Some(gathering_started) = time_to_gather.stage_start {
-					if gathering_started.elapsed().as_millis() > 6000 {
-						gum::trace!(
-							target: LOG_TARGET,
-							?block_hash,
-							?candidate_hash,
-							"Long assignment gathering time",
-						);
-					}
-					metrics.observe_assignment_gathering_time(
-						time_to_gather.stage,
-						gathering_started.elapsed().as_millis() as usize,
-					)
-				}
-			},
-		}
-	}
 }
 
 #[derive(Debug, Clone)]
@@ -1065,7 +898,6 @@ enum Action {
 		candidate: CandidateReceipt,
 		backing_group: GroupIndex,
 		distribute_assignment: bool,
-		core_index: Option<CoreIndex>,
 	},
 	NoteApprovedInChainSelection(Hash),
 	IssueApproval(CandidateHash, ApprovalVoteRequest),
@@ -1077,6 +909,7 @@ enum Action {
 async fn run<B, Context>(
 	mut ctx: Context,
 	mut subsystem: ApprovalVotingSubsystem,
+	clock: Box<dyn Clock + Send + Sync>,
 	assignment_criteria: Box<dyn AssignmentCriteria + Send + Sync>,
 	mut backend: B,
 ) -> SubsystemResult<()>
@@ -1090,12 +923,9 @@ where
 	let mut state = State {
 		keystore: subsystem.keystore,
 		slot_duration_millis: subsystem.slot_duration_millis,
-		clock: subsystem.clock,
+		clock,
 		assignment_criteria,
 		spans: HashMap::new(),
-		per_block_assignments_gathering_times: LruMap::new(ByLength::new(
-			MAX_BLOCKS_WITH_ASSIGNMENT_TIMESTAMPS,
-		)),
 	};
 
 	// `None` on start-up. Gets initialized/updated on leaf update
@@ -1127,13 +957,12 @@ where
 				subsystem.metrics.on_wakeup();
 				process_wakeup(
 					&mut ctx,
-					&mut state,
+					&state,
 					&mut overlayed_db,
 					&mut session_info_provider,
 					woken_block,
 					woken_candidate,
 					&subsystem.metrics,
-					&wakeups,
 				).await?
 			}
 			next_msg = ctx.recv().fuse() => {
@@ -1258,7 +1087,7 @@ where
 // need to handle these newly generated actions before we finalize
 // completing additional actions in the submitted sequence of actions.
 //
-// Since recursive async functions are not stable yet, we are
+// Since recursive async functions are not not stable yet, we are
 // forced to modify the actions iterator on the fly whenever a new set
 // of actions are generated by handling a single action.
 //
@@ -1308,7 +1137,6 @@ async fn handle_actions<Context>(
 					candidate_hash,
 					delayed_approvals_timers,
 					approval_request,
-					&wakeups,
 				)
 				.await?
 				.into_iter()
@@ -1329,7 +1157,6 @@ async fn handle_actions<Context>(
 				candidate,
 				backing_group,
 				distribute_assignment,
-				core_index,
 			} => {
 				// Don't launch approval work if the node is syncing.
 				if let Mode::Syncing(_) = *mode {
@@ -1386,7 +1213,6 @@ async fn handle_actions<Context>(
 										block_hash,
 										backing_group,
 										executor_params,
-										core_index,
 										&launch_approval_span,
 									)
 									.await
@@ -1412,20 +1238,13 @@ async fn handle_actions<Context>(
 			Action::BecomeActive => {
 				*mode = Mode::Active;
 
-				let (messages, next_actions) = distribution_messages_for_activation(
-					ctx,
+				let messages = distribution_messages_for_activation(
 					overlayed_db,
 					state,
 					delayed_approvals_timers,
-					session_info_provider,
-				)
-				.await?;
+				)?;
 
 				ctx.send_messages(messages.into_iter()).await;
-				let next_actions: Vec<Action> =
-					next_actions.into_iter().map(|v| v.clone()).chain(actions_iter).collect();
-
-				actions_iter = next_actions.into_iter();
 			},
 			Action::Conclude => {
 				conclude = true;
@@ -1456,21 +1275,6 @@ fn cores_to_candidate_indices(
 	CandidateBitfield::try_from(candidate_indices)
 }
 
-// Returns the claimed core bitfield from the assignment cert and the core index
-// from the block entry.
-fn get_core_indices_on_startup(
-	assignment: &AssignmentCertKindV2,
-	block_entry_core_index: CoreIndex,
-) -> CoreBitfield {
-	match &assignment {
-		AssignmentCertKindV2::RelayVRFModuloCompact { core_bitfield } => core_bitfield.clone(),
-		AssignmentCertKindV2::RelayVRFModulo { sample: _ } =>
-			CoreBitfield::try_from(vec![block_entry_core_index]).expect("Not an empty vec; qed"),
-		AssignmentCertKindV2::RelayVRFDelay { core_index } =>
-			CoreBitfield::try_from(vec![*core_index]).expect("Not an empty vec; qed"),
-	}
-}
-
 // Returns the claimed core bitfield from the assignment cert, the candidate hash and a
 // `BlockEntry`. Can fail only for VRF Delay assignments for which we cannot find the candidate hash
 // in the block entry which indicates a bug or corrupted storage.
@@ -1494,19 +1298,15 @@ fn get_assignment_core_indices(
 	}
 }
 
-#[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
-async fn distribution_messages_for_activation<Context>(
-	ctx: &mut Context,
+fn distribution_messages_for_activation(
 	db: &OverlayedBackend<'_, impl Backend>,
 	state: &State,
 	delayed_approvals_timers: &mut DelayedApprovalTimer,
-	session_info_provider: &mut RuntimeInfo,
-) -> SubsystemResult<(Vec<ApprovalDistributionMessage>, Vec<Action>)> {
+) -> SubsystemResult<Vec<ApprovalDistributionMessage>> {
 	let all_blocks: Vec<Hash> = db.load_all_blocks()?;
 
 	let mut approval_meta = Vec::with_capacity(all_blocks.len());
 	let mut messages = Vec::new();
-	let mut actions = Vec::new();
 
 	messages.push(ApprovalDistributionMessage::NewBlocks(Vec::new())); // dummy value.
 
@@ -1541,7 +1341,7 @@ async fn distribution_messages_for_activation<Context>(
 			session: block_entry.session(),
 		});
 		let mut signatures_queued = HashSet::new();
-		for (core_index, candidate_hash) in block_entry.candidates() {
+		for (_, candidate_hash) in block_entry.candidates() {
 			let _candidate_span =
 				distribution_message_span.child("candidate").with_candidate(*candidate_hash);
 			let candidate_entry = match db.load_candidate_entry(&candidate_hash)? {
@@ -1563,122 +1363,108 @@ async fn distribution_messages_for_activation<Context>(
 					match approval_entry.local_statements() {
 						(None, None) | (None, Some(_)) => {}, // second is impossible case.
 						(Some(assignment), None) => {
-							let claimed_core_indices =
-								get_core_indices_on_startup(&assignment.cert().kind, *core_index);
+							if let Some(claimed_core_indices) = get_assignment_core_indices(
+								&assignment.cert().kind,
+								&candidate_hash,
+								&block_entry,
+							) {
+								if block_entry.has_candidates_pending_signature() {
+									delayed_approvals_timers.maybe_arm_timer(
+										state.clock.tick_now(),
+										state.clock.as_ref(),
+										block_entry.block_hash(),
+										assignment.validator_index(),
+									)
+								}
 
-							if block_entry.has_candidates_pending_signature() {
-								delayed_approvals_timers.maybe_arm_timer(
-									state.clock.tick_now(),
-									state.clock.as_ref(),
-									block_entry.block_hash(),
-									assignment.validator_index(),
-								)
-							}
-
-							match cores_to_candidate_indices(&claimed_core_indices, &block_entry) {
-								Ok(bitfield) => {
-									gum::debug!(
-										target: LOG_TARGET,
-										candidate_hash = ?candidate_entry.candidate_receipt().hash(),
-										?block_hash,
-										"Discovered, triggered assignment, not approved yet",
-									);
-
-									let indirect_cert = IndirectAssignmentCertV2 {
-										block_hash,
-										validator: assignment.validator_index(),
-										cert: assignment.cert().clone(),
-									};
-									messages.push(
+								match cores_to_candidate_indices(
+									&claimed_core_indices,
+									&block_entry,
+								) {
+									Ok(bitfield) => messages.push(
 										ApprovalDistributionMessage::DistributeAssignment(
-											indirect_cert.clone(),
-											bitfield.clone(),
+											IndirectAssignmentCertV2 {
+												block_hash,
+												validator: assignment.validator_index(),
+												cert: assignment.cert().clone(),
+											},
+											bitfield,
 										),
-									);
-
-									if !block_entry.candidate_is_pending_signature(*candidate_hash)
-									{
-										let ExtendedSessionInfo { ref executor_params, .. } =
-											match get_extended_session_info(
-												session_info_provider,
-												ctx.sender(),
-												block_entry.block_hash(),
-												block_entry.session(),
-											)
-											.await
-											{
-												Some(i) => i,
-												None => continue,
-											};
-
-										actions.push(Action::LaunchApproval {
-											claimed_candidate_indices: bitfield,
-											candidate_hash: candidate_entry
-												.candidate_receipt()
-												.hash(),
-											indirect_cert,
-											assignment_tranche: assignment.tranche(),
-											relay_block_hash: block_hash,
-											session: block_entry.session(),
-											executor_params: executor_params.clone(),
-											candidate: candidate_entry.candidate_receipt().clone(),
-											backing_group: approval_entry.backing_group(),
-											distribute_assignment: false,
-											core_index: Some(*core_index),
-										});
-									}
-								},
-								Err(err) => {
-									// Should never happen. If we fail here it means the
-									// assignment is null (no cores claimed).
-									gum::warn!(
-										target: LOG_TARGET,
-										?block_hash,
-										?candidate_hash,
-										?err,
-										"Failed to create assignment bitfield",
-									);
-								},
+									),
+									Err(err) => {
+										// Should never happen. If we fail here it means the
+										// assignment is null (no cores claimed).
+										gum::warn!(
+											target: LOG_TARGET,
+											?block_hash,
+											?candidate_hash,
+											?err,
+											"Failed to create assignment bitfield",
+										);
+									},
+								}
+							} else {
+								gum::warn!(
+									target: LOG_TARGET,
+									?block_hash,
+									?candidate_hash,
+									"Cannot get assignment claimed core indices",
+								);
 							}
 						},
 						(Some(assignment), Some(approval_sig)) => {
-							let claimed_core_indices =
-								get_core_indices_on_startup(&assignment.cert().kind, *core_index);
-							match cores_to_candidate_indices(&claimed_core_indices, &block_entry) {
-								Ok(bitfield) => messages.push(
-									ApprovalDistributionMessage::DistributeAssignment(
-										IndirectAssignmentCertV2 {
-											block_hash,
-											validator: assignment.validator_index(),
-											cert: assignment.cert().clone(),
-										},
-										bitfield,
+							if let Some(claimed_core_indices) = get_assignment_core_indices(
+								&assignment.cert().kind,
+								&candidate_hash,
+								&block_entry,
+							) {
+								match cores_to_candidate_indices(
+									&claimed_core_indices,
+									&block_entry,
+								) {
+									Ok(bitfield) => messages.push(
+										ApprovalDistributionMessage::DistributeAssignment(
+											IndirectAssignmentCertV2 {
+												block_hash,
+												validator: assignment.validator_index(),
+												cert: assignment.cert().clone(),
+											},
+											bitfield,
+										),
 									),
-								),
-								Err(err) => {
-									gum::warn!(
-										target: LOG_TARGET,
-										?block_hash,
-										?candidate_hash,
-										?err,
-										"Failed to create assignment bitfield",
-									);
-									// If we didn't send assignment, we don't send approval.
-									continue
-								},
-							}
-							if signatures_queued
-								.insert(approval_sig.signed_candidates_indices.clone())
-							{
-								messages.push(ApprovalDistributionMessage::DistributeApproval(
-									IndirectSignedApprovalVoteV2 {
-										block_hash,
-										candidate_indices: approval_sig.signed_candidates_indices,
-										validator: assignment.validator_index(),
-										signature: approval_sig.signature,
+									Err(err) => {
+										gum::warn!(
+											target: LOG_TARGET,
+											?block_hash,
+											?candidate_hash,
+											?err,
+											"Failed to create assignment bitfield",
+										);
+										// If we didn't send assignment, we don't send approval.
+										continue
 									},
-								))
-							};
+								}
+								if signatures_queued
+									.insert(approval_sig.signed_candidates_indices.clone())
+								{
+									messages.push(ApprovalDistributionMessage::DistributeApproval(
+										IndirectSignedApprovalVoteV2 {
+											block_hash,
+											candidate_indices: approval_sig
+												.signed_candidates_indices,
+											validator: assignment.validator_index(),
+											signature: approval_sig.signature,
+										},
+									))
+								};
+							} else {
+								gum::warn!(
+									target: LOG_TARGET,
+									?block_hash,
+									?candidate_hash,
+									"Cannot get assignment claimed core indices",
+								);
+							}
 						},
 					}
 				},
@@ -1695,7 +1481,7 @@ async fn distribution_messages_for_activation<Context>(
 	}
 
 	messages[0] = ApprovalDistributionMessage::NewBlocks(approval_meta);
-	Ok((messages, actions))
+	Ok(messages)
 }
 
 // Handle an incoming signal from the overseer. Returns true if execution should conclude.
@@ -1786,7 +1572,6 @@ async fn handle_from_overseer<Context>(
 			// `prune_finalized_wakeups` prunes all finalized block hashes. We prune spans
 			// accordingly.
 			wakeups.prune_finalized_wakeups(block_number, &mut state.spans);
-			state.cleanup_assignments_gathering_timestamp(block_number);
 
 			// // `prune_finalized_wakeups` prunes all finalized block hashes. We prune spans
 			// accordingly. let hash_set =
@@ -1824,7 +1609,6 @@ async fn handle_from_overseer<Context>(
 					|r| {
 						let _ = res.send(r);
 					},
-					&wakeups,
 				)
 				.await?
 				.0,
@@ -2012,7 +1796,7 @@ async fn get_approval_signatures_for_candidate<Context>(
 	gum::trace!(
 		target: LOG_TARGET,
 		?candidate_hash,
-		"Spawning task for fetching signatures from approval-distribution"
+		"Spawning task for fetching sinatures from approval-distribution"
 	);
 	ctx.spawn("get-approval-signatures", Box::pin(get_approvals))
 }
@@ -2633,13 +2417,12 @@ where
 
 async fn check_and_import_approval<T, Sender>(
 	sender: &mut Sender,
-	state: &mut State,
+	state: &State,
 	db: &mut OverlayedBackend<'_, impl Backend>,
 	session_info_provider: &mut RuntimeInfo,
 	metrics: &Metrics,
 	approval: IndirectSignedApprovalVoteV2,
 	with_response: impl FnOnce(ApprovalCheckResult) -> T,
-	wakeups: &Wakeups,
 ) -> SubsystemResult<(Vec<Action>, T)>
 where
 	Sender: SubsystemSender<RuntimeApiMessage>,
@@ -2800,7 +2583,7 @@ where
 			_ => {},
 		}
 
-		gum::trace!(
+		gum::debug!(
 			target: LOG_TARGET,
 			validator_index = approval.validator.0,
 			candidate_hash = ?approved_candidate_hash,
@@ -2818,7 +2601,6 @@ where
 			approved_candidate_hash,
 			candidate_entry,
 			ApprovalStateTransition::RemoteApproval(approval.validator),
-			wakeups,
 		)
 		.await;
 		actions.extend(new_actions);
@@ -2853,10 +2635,6 @@ impl ApprovalStateTransition {
 			ApprovalStateTransition::WakeupProcessed => false,
 		}
 	}
-
-	fn is_remote_approval(&self) -> bool {
-		matches!(*self, ApprovalStateTransition::RemoteApproval(_))
-	}
 }
 
 // Advance the approval state, either by importing an approval vote which is already checked to be
@@ -2865,7 +2643,7 @@ impl ApprovalStateTransition {
 // as necessary and schedules any further wakeups.
 async fn advance_approval_state<Sender>(
 	sender: &mut Sender,
-	state: &mut State,
+	state: &State,
 	db: &mut OverlayedBackend<'_, impl Backend>,
 	session_info_provider: &mut RuntimeInfo,
 	metrics: &Metrics,
@@ -2873,7 +2651,6 @@ async fn advance_approval_state<Sender>(
 	candidate_hash: CandidateHash,
 	mut candidate_entry: CandidateEntry,
 	transition: ApprovalStateTransition,
-	wakeups: &Wakeups,
 ) -> Vec<Action>
 where
 	Sender: SubsystemSender<RuntimeApiMessage>,
@@ -2916,13 +2693,6 @@ where
 			approval_entry,
 			status.required_tranches.clone(),
 		);
-		state.observe_assignment_gathering_status(
-			&metrics,
-			&status.required_tranches,
-			block_hash,
-			block_entry.block_number(),
-			candidate_hash,
-		);
 
 		// Check whether this is approved, while allowing a maximum
 		// assignment tick of `now - APPROVAL_DELAY` - that is, that
@@ -2930,7 +2700,7 @@ where
 		let is_approved = check.is_approved(tick_now.saturating_sub(APPROVAL_DELAY));
 		if status.last_no_shows != 0 {
 			metrics.on_observed_no_shows(status.last_no_shows);
-			gum::trace!(
+			gum::debug!(
 				target: LOG_TARGET,
 				?candidate_hash,
 				?block_hash,
@@ -3011,43 +2781,6 @@ where
 			status.required_tranches,
 		));
 
-		if is_approved && transition.is_remote_approval() {
-			// Make sure we wake other blocks in case they have
-			// a no-show that might be covered by this approval.
-			for (fork_block_hash, fork_approval_entry) in candidate_entry
-				.block_assignments
-				.iter()
-				.filter(|(hash, _)| **hash != block_hash)
-			{
-				let assigned_on_fork_block = validator_index
-					.as_ref()
-					.map(|validator_index| fork_approval_entry.is_assigned(*validator_index))
-					.unwrap_or_default();
-				if wakeups.wakeup_for(*fork_block_hash, candidate_hash).is_none() &&
-					!fork_approval_entry.is_approved() &&
-					assigned_on_fork_block
-				{
-					let fork_block_entry = db.load_block_entry(fork_block_hash);
-					if let Ok(Some(fork_block_entry)) = fork_block_entry {
-						actions.push(Action::ScheduleWakeup {
-							block_hash: *fork_block_hash,
-							block_number: fork_block_entry.block_number(),
-							candidate_hash,
-							// Schedule the wakeup next tick, since the assignment must be a
-							// no-show, because there is no-wakeup scheduled.
-							tick: tick_now + 1,
-						})
-					} else {
-						gum::debug!(
-							target: LOG_TARGET,
-							?fork_block_entry,
-							?fork_block_hash,
-							"Failed to load block entry"
-						)
-					}
-				}
-			}
-		}
 		// We have no need to write the candidate entry if all of the following
 		// is true:
 		//
@@ -3103,13 +2836,12 @@ fn should_trigger_assignment(
 #[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
 async fn process_wakeup<Context>(
 	ctx: &mut Context,
-	state: &mut State,
+	state: &State,
 	db: &mut OverlayedBackend<'_, impl Backend>,
 	session_info_provider: &mut RuntimeInfo,
 	relay_block: Hash,
 	candidate_hash: CandidateHash,
 	metrics: &Metrics,
-	wakeups: &Wakeups,
 ) -> SubsystemResult<Vec<Action>> {
 	let mut span = state
 		.spans
@@ -3216,11 +2948,6 @@ async fn process_wakeup<Context>(
 			"Launching approval work.",
 		);
 
-		let candidate_core_index = block_entry
-			.candidates()
-			.iter()
-			.find_map(|(core_index, h)| (h == &candidate_hash).then_some(*core_index));
-
 		if let Some(claimed_core_indices) =
 			get_assignment_core_indices(&indirect_cert.cert.kind, &candidate_hash, &block_entry)
 		{
@@ -3233,6 +2960,7 @@ async fn process_wakeup<Context>(
 						true
 					};
 					db.write_block_entry(block_entry.clone());
+
 					actions.push(Action::LaunchApproval {
 						claimed_candidate_indices,
 						candidate_hash,
@@ -3244,12 +2972,10 @@ async fn process_wakeup<Context>(
 						candidate: candidate_receipt,
 						backing_group,
 						distribute_assignment,
-						core_index: candidate_core_index,
 					});
 				},
 				Err(err) => {
-					// Never happens, it should only happen if no cores are claimed, which is a
-					// bug.
+					// Never happens, it should only happen if no cores are claimed, which is a bug.
 					gum::warn!(
 						target: LOG_TARGET,
 						block_hash = ?relay_block,
@@ -3284,7 +3010,6 @@ async fn process_wakeup<Context>(
 			candidate_hash,
 			candidate_entry,
 			ApprovalStateTransition::WakeupProcessed,
-			wakeups,
 		)
 		.await,
 	);
@@ -3305,7 +3030,6 @@ async fn launch_approval<Context>(
 	block_hash: Hash,
 	backing_group: GroupIndex,
 	executor_params: ExecutorParams,
-	core_index: Option<CoreIndex>,
 	span: &jaeger::Span,
 ) -> SubsystemResult<RemoteHandle<ApprovalState>> {
 	let (a_tx, a_rx) = oneshot::channel();
@@ -3352,7 +3076,6 @@ async fn launch_approval<Context>(
 		candidate.clone(),
 		session_index,
 		Some(backing_group),
-		core_index,
 		a_tx,
 	))
 	.await;
@@ -3517,7 +3240,6 @@ async fn issue_approval<Context>(
 	candidate_hash: CandidateHash,
 	delayed_approvals_timers: &mut DelayedApprovalTimer,
 	ApprovalVoteRequest { validator_index, block_hash }: ApprovalVoteRequest,
-	wakeups: &Wakeups,
 ) -> SubsystemResult<Vec<Action>> {
 	let mut issue_approval_span = state
 		.spans
@@ -3621,7 +3343,7 @@ async fn issue_approval<Context>(
 		);
 	}
 
-	gum::debug!(
+	gum::info!(
 		target: LOG_TARGET,
 		?candidate_hash,
 		?block_hash,
@@ -3639,7 +3361,6 @@ async fn issue_approval<Context>(
 		candidate_hash,
 		candidate_entry,
 		ApprovalStateTransition::LocalApproval(validator_index as _),
-		wakeups,
 	)
 	.await;
 

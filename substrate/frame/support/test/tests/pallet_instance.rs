@@ -26,7 +26,6 @@ use frame_support::{
 		UnfilteredDispatchable,
 	},
 	weights::Weight,
-	OrdNoBound, PartialOrdNoBound,
 };
 use sp_io::{
 	hashing::{blake2_128, twox_128, twox_64},
@@ -209,8 +208,6 @@ pub mod pallet {
 		RuntimeDebugNoBound,
 		CloneNoBound,
 		PartialEqNoBound,
-		PartialOrdNoBound,
-		OrdNoBound,
 		Encode,
 		Decode,
 		scale_info::TypeInfo,
@@ -296,7 +293,7 @@ pub mod pallet2 {
 	}
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
 	type BaseCallFilter = frame_support::traits::Everything;
 	type RuntimeOrigin = RuntimeOrigin;
@@ -308,6 +305,7 @@ impl frame_system::Config for Runtime {
 	type Lookup = sp_runtime::traits::IdentityLookup<Self::AccountId>;
 	type Block = Block;
 	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU32<250>;
 	type BlockWeights = ();
 	type BlockLength = ();
 	type DbWeight = ();

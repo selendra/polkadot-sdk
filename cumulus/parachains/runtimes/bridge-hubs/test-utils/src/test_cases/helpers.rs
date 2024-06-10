@@ -31,7 +31,7 @@ use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_bridge_grandpa::{BridgedBlockHash, BridgedHeader};
 use parachains_common::AccountId;
 use parachains_runtimes_test_utils::{
-	mock_open_hrmp_channel, AccountIdOf, CollatorSessionKeys, RuntimeCallOf, SlotDurations,
+	mock_open_hrmp_channel, AccountIdOf, CollatorSessionKeys, RuntimeCallOf,
 };
 use sp_core::Get;
 use sp_keyring::AccountKeyring::*;
@@ -193,41 +193,11 @@ where
 	}
 }
 
-/// Verifies that relayer balance is equal to given value.
-pub struct VerifyRelayerBalance<Runtime: pallet_balances::Config> {
-	relayer: Runtime::AccountId,
-	balance: Runtime::Balance,
-}
-
-impl<Runtime> VerifyRelayerBalance<Runtime>
-where
-	Runtime: pallet_balances::Config,
-{
-	/// Expect given relayer balance after transaction.
-	pub fn expect_relayer_balance(
-		relayer: Runtime::AccountId,
-		balance: Runtime::Balance,
-	) -> Box<dyn VerifyTransactionOutcome> {
-		Box::new(Self { relayer, balance })
-	}
-}
-
-impl<Runtime> VerifyTransactionOutcome for VerifyRelayerBalance<Runtime>
-where
-	Runtime: pallet_balances::Config,
-{
-	fn verify_outcome(&self) {
-		assert_eq!(pallet_balances::Pallet::<Runtime>::free_balance(&self.relayer), self.balance,);
-	}
-}
-
 /// Initialize bridge GRANDPA pallet.
 pub(crate) fn initialize_bridge_grandpa_pallet<Runtime, GPI>(
 	init_data: bp_header_chain::InitializationData<BridgedHeader<Runtime, GPI>>,
 ) where
-	Runtime: BridgeGrandpaConfig<GPI>
-		+ cumulus_pallet_parachain_system::Config
-		+ pallet_timestamp::Config,
+	Runtime: BridgeGrandpaConfig<GPI>,
 {
 	pallet_bridge_grandpa::Pallet::<Runtime, GPI>::initialize(
 		RuntimeHelper::<Runtime>::root_origin(),
@@ -250,7 +220,6 @@ pub fn relayer_id_at_bridged_chain<Runtime: pallet_bridge_messages::Config<MPI>,
 /// with proofs (finality, message) independently submitted.
 pub fn relayed_incoming_message_works<Runtime, AllPalletsWithoutSystem, MPI>(
 	collator_session_key: CollatorSessionKeys<Runtime>,
-	slot_durations: SlotDurations,
 	runtime_para_id: u32,
 	sibling_parachain_id: u32,
 	local_relay_chain_id: NetworkId,
@@ -261,7 +230,7 @@ pub fn relayed_incoming_message_works<Runtime, AllPalletsWithoutSystem, MPI>(
 	prepare_message_proof_import: impl FnOnce(
 		Runtime::AccountId,
 		Runtime::InboundRelayer,
-		InteriorLocation,
+		InteriorMultiLocation,
 		MessageNonce,
 		Xcm<()>,
 	) -> CallsAndVerifiers<Runtime>,
@@ -303,26 +272,25 @@ pub fn relayed_incoming_message_works<Runtime, AllPalletsWithoutSystem, MPI>(
 				sibling_parachain_id.into(),
 				included_head,
 				&alice,
-				&slot_durations,
 			);
 
 			// set up relayer details and proofs
 
-			let message_destination: InteriorLocation =
-				[GlobalConsensus(local_relay_chain_id), Parachain(sibling_parachain_id)].into();
+			let message_destination =
+				X2(GlobalConsensus(local_relay_chain_id), Parachain(sibling_parachain_id));
 			// some random numbers (checked by test)
 			let message_nonce = 1;
 
-			let xcm = vec![Instruction::<()>::ClearOrigin; 42];
+			let xcm = vec![xcm::v3::Instruction::<()>::ClearOrigin; 42];
 			let expected_dispatch = xcm::latest::Xcm::<()>({
 				let mut expected_instructions = xcm.clone();
 				// dispatch prepends bridge pallet instance
 				expected_instructions.insert(
 					0,
-					DescendOrigin([PalletInstance(
+					DescendOrigin(X1(PalletInstance(
 						<pallet_bridge_messages::Pallet<Runtime, MPI> as PalletInfoAccess>::index()
 							as u8,
-					)].into()),
+					))),
 				);
 				expected_instructions
 			});

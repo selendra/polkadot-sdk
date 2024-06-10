@@ -20,7 +20,7 @@
 
 use crate::{config::TransportConfig, types::ProtocolName};
 
-use sc_network_types::{multiaddr::Multiaddr, PeerId};
+use libp2p::{Multiaddr, PeerId};
 
 use std::fmt;
 
@@ -77,9 +77,6 @@ pub enum Error {
 	/// Connection closed.
 	#[error("Connection closed")]
 	ConnectionClosed,
-	/// Litep2p error.
-	#[error("Litep2p error: `{0}`")]
-	Litep2p(litep2p::Error),
 }
 
 // Make `Debug` use the `Display` implementation.

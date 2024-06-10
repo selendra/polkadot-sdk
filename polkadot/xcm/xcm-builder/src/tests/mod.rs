@@ -15,6 +15,7 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 use super::{test_utils::*, *};
+use core::convert::TryInto;
 use frame_support::{
 	assert_err,
 	traits::{ConstU32, ContainsPair, ProcessMessageError},
@@ -35,7 +36,6 @@ mod locking;
 mod origins;
 mod pay;
 mod querying;
-mod routing;
 mod transacting;
 mod version_subscriptions;
 mod weight;

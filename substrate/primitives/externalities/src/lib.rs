@@ -25,10 +25,11 @@
 //!
 //! This crate exposes the main [`Externalities`] trait.
 
-extern crate alloc;
-
-use alloc::{boxed::Box, vec::Vec};
-use core::any::{Any, TypeId};
+use sp_std::{
+	any::{Any, TypeId},
+	boxed::Box,
+	vec::Vec,
+};
 
 use sp_storage::{ChildInfo, StateVersion, TrackedStorageKey};
 

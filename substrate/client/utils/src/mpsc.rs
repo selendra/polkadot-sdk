@@ -86,7 +86,7 @@ pub fn tracing_unbounded<T>(
 		warning_fired: Arc::new(AtomicBool::new(false)),
 		creation_backtrace: Arc::new(Backtrace::force_capture()),
 	};
-	let receiver = TracingUnboundedReceiver { inner: r, name: name.into() };
+	let receiver = TracingUnboundedReceiver { inner: r, name };
 	(sender, receiver)
 }
 
@@ -156,11 +156,6 @@ impl<T> TracingUnboundedReceiver<T> {
 	/// The number of elements in the channel (proxy function to [`async_channel::Receiver`]).
 	pub fn len(&self) -> usize {
 		self.inner.len()
-	}
-
-	/// The name of this receiver
-	pub fn name(&self) -> &'static str {
-		self.name
 	}
 }
 

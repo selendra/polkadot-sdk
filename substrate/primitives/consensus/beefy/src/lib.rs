@@ -31,31 +31,24 @@
 //! it will use a different set of keys. For Polkadot use case we plan to use `secp256k1` for BEEFY,
 //! while GRANDPA uses `ed25519`.
 
-extern crate alloc;
-
 mod commitment;
-mod payload;
-
 pub mod mmr;
+mod payload;
+#[cfg(feature = "std")]
+mod test_utils;
 pub mod witness;
 
-/// Test utilities
-#[cfg(feature = "std")]
-pub mod test_utils;
-
-pub use commitment::{Commitment, KnownSignature, SignedCommitment, VersionedFinalityProof};
+pub use commitment::{Commitment, SignedCommitment, VersionedFinalityProof};
 pub use payload::{known_payloads, BeefyPayloadId, Payload, PayloadProvider};
+#[cfg(feature = "std")]
+pub use test_utils::*;
 
-use alloc::vec::Vec;
 use codec::{Codec, Decode, Encode};
-use core::fmt::{Debug, Display};
 use scale_info::TypeInfo;
-use sp_application_crypto::{AppPublic, RuntimeAppPublic};
+use sp_application_crypto::RuntimeAppPublic;
 use sp_core::H256;
-use sp_runtime::{
-	traits::{Hash, Keccak256, NumberFor},
-	OpaqueValue,
-};
+use sp_runtime::traits::{Hash, Keccak256, NumberFor};
+use sp_std::prelude::*;
 
 /// Key type for BEEFY module.
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::BEEFY;
@@ -70,21 +63,6 @@ pub trait BeefyAuthorityId<MsgHash: Hash>: RuntimeAppPublic {
 	fn verify(&self, signature: &<Self as RuntimeAppPublic>::Signature, msg: &[u8]) -> bool;
 }
 
-/// Hasher used for BEEFY signatures.
-pub type BeefySignatureHasher = sp_runtime::traits::Keccak256;
-
-/// A trait bound which lists all traits which are required to be implemented by
-/// a BEEFY AuthorityId type in order to be able to be used in BEEFY Keystore
-pub trait AuthorityIdBound:
-	Ord
-	+ AppPublic
-	+ Display
-	+ BeefyAuthorityId<BeefySignatureHasher, Signature = Self::BoundedSignature>
-{
-	/// Necessary bounds on the Signature associated with the AuthorityId
-	type BoundedSignature: Debug + Eq + PartialEq + Clone + TypeInfo + Codec + Send + Sync;
-}
-
 /// BEEFY cryptographic types for ECDSA crypto
 ///
 /// This module basically introduces four crypto types:
@@ -96,7 +74,7 @@ pub trait AuthorityIdBound:
 /// Your code should use the above types as concrete types for all crypto related
 /// functionality.
 pub mod ecdsa_crypto {
-	use super::{AuthorityIdBound, BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
+	use super::{BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
 	use sp_application_crypto::{app_crypto, ecdsa};
 	use sp_core::crypto::Wraps;
 
@@ -123,9 +101,6 @@ pub mod ecdsa_crypto {
 			}
 		}
 	}
-	impl AuthorityIdBound for AuthorityId {
-		type BoundedSignature = Signature;
-	}
 }
 
 /// BEEFY cryptographic types for BLS crypto
@@ -141,7 +116,7 @@ pub mod ecdsa_crypto {
 
 #[cfg(feature = "bls-experimental")]
 pub mod bls_crypto {
-	use super::{AuthorityIdBound, BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
+	use super::{BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
 	use sp_application_crypto::{app_crypto, bls377};
 	use sp_core::{bls377::Pair as BlsPair, crypto::Wraps, Pair as _};
 
@@ -159,15 +134,12 @@ pub mod bls_crypto {
 	{
 		fn verify(&self, signature: &<Self as RuntimeAppPublic>::Signature, msg: &[u8]) -> bool {
 			// `w3f-bls` library uses IETF hashing standard and as such does not expose
-			// a choice of hash-to-field function.
+			// a choice of hash to field function.
 			// We are directly calling into the library to avoid introducing new host call.
 			// and because BeefyAuthorityId::verify is being called in the runtime so we don't have
 
 			BlsPair::verify(signature.as_inner_ref(), msg, self.as_inner_ref())
 		}
-	}
-	impl AuthorityIdBound for AuthorityId {
-		type BoundedSignature = Signature;
 	}
 }
 
@@ -183,7 +155,7 @@ pub mod bls_crypto {
 /// functionality.
 #[cfg(feature = "bls-experimental")]
 pub mod ecdsa_bls_crypto {
-	use super::{AuthorityIdBound, BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
+	use super::{BeefyAuthorityId, Hash, RuntimeAppPublic, KEY_TYPE};
 	use sp_application_crypto::{app_crypto, ecdsa_bls377};
 	use sp_core::{crypto::Wraps, ecdsa_bls377::Pair as EcdsaBlsPair};
 
@@ -203,7 +175,7 @@ pub mod ecdsa_bls_crypto {
 		fn verify(&self, signature: &<Self as RuntimeAppPublic>::Signature, msg: &[u8]) -> bool {
 			// We can not simply call
 			// `EcdsaBlsPair::verify(signature.as_inner_ref(), msg, self.as_inner_ref())`
-			// because that invokes ECDSA default verification which performs Blake2b hash
+			// because that invokes ECDSA default verification which perfoms Blake2b hash
 			// which we don't want. This is because ECDSA signatures are meant to be verified
 			// on Ethereum network where Keccak hasher is significantly cheaper than Blake2b.
 			// See Figure 3 of [OnSc21](https://www.scitepress.org/Papers/2021/106066/106066.pdf)
@@ -214,10 +186,6 @@ pub mod ecdsa_bls_crypto {
 				self.as_inner_ref(),
 			)
 		}
-	}
-
-	impl AuthorityIdBound for AuthorityId {
-		type BoundedSignature = Signature;
 	}
 }
 
@@ -311,14 +279,14 @@ pub struct VoteMessage<Number, Id, Signature> {
 /// BEEFY happens when a voter votes on the same round/block for different payloads.
 /// Proving is achieved by collecting the signed commitments of conflicting votes.
 #[derive(Clone, Debug, Decode, Encode, PartialEq, TypeInfo)]
-pub struct DoubleVotingProof<Number, Id, Signature> {
+pub struct EquivocationProof<Number, Id, Signature> {
 	/// The first vote in the equivocation.
 	pub first: VoteMessage<Number, Id, Signature>,
 	/// The second vote in the equivocation.
 	pub second: VoteMessage<Number, Id, Signature>,
 }
 
-impl<Number, Id, Signature> DoubleVotingProof<Number, Id, Signature> {
+impl<Number, Id, Signature> EquivocationProof<Number, Id, Signature> {
 	/// Returns the authority id of the equivocator.
 	pub fn offender_id(&self) -> &Id {
 		&self.first.id
@@ -352,7 +320,7 @@ where
 /// Verifies the equivocation proof by making sure that both votes target
 /// different blocks and that its signatures are valid.
 pub fn check_equivocation_proof<Number, Id, MsgHash>(
-	report: &DoubleVotingProof<Number, Id, <Id as RuntimeAppPublic>::Signature>,
+	report: &EquivocationProof<Number, Id, <Id as RuntimeAppPublic>::Signature>,
 ) -> bool
 where
 	Id: BeefyAuthorityId<MsgHash> + PartialEq,
@@ -404,7 +372,21 @@ impl<AuthorityId> OnNewValidatorSet<AuthorityId> for () {
 /// the runtime API boundary this type is unknown and as such we keep this
 /// opaque representation, implementors of the runtime API will have to make
 /// sure that all usages of `OpaqueKeyOwnershipProof` refer to the same type.
-pub type OpaqueKeyOwnershipProof = OpaqueValue;
+#[derive(Decode, Encode, PartialEq, TypeInfo)]
+pub struct OpaqueKeyOwnershipProof(Vec<u8>);
+impl OpaqueKeyOwnershipProof {
+	/// Create a new `OpaqueKeyOwnershipProof` using the given encoded
+	/// representation.
+	pub fn new(inner: Vec<u8>) -> OpaqueKeyOwnershipProof {
+		OpaqueKeyOwnershipProof(inner)
+	}
+
+	/// Try to decode this `OpaqueKeyOwnershipProof` into the given concrete key
+	/// ownership proof type.
+	pub fn decode<T: Decode>(self) -> Option<T> {
+		codec::Decode::decode(&mut &self.0[..]).ok()
+	}
+}
 
 sp_api::decl_runtime_apis! {
 	/// API necessary for BEEFY voters.
@@ -428,7 +410,7 @@ sp_api::decl_runtime_apis! {
 		/// hardcoded to return `None`). Only useful in an offchain context.
 		fn submit_report_equivocation_unsigned_extrinsic(
 			equivocation_proof:
-				DoubleVotingProof<NumberFor<Block>, AuthorityId, <AuthorityId as RuntimeAppPublic>::Signature>,
+				EquivocationProof<NumberFor<Block>, AuthorityId, <AuthorityId as RuntimeAppPublic>::Signature>,
 			key_owner_proof: OpaqueKeyOwnershipProof,
 		) -> Option<()>;
 
@@ -455,8 +437,7 @@ sp_api::decl_runtime_apis! {
 mod tests {
 	use super::*;
 	use sp_application_crypto::ecdsa::{self, Public};
-	use sp_core::crypto::{Pair, Wraps};
-	use sp_crypto_hashing::{blake2_256, keccak_256};
+	use sp_core::{blake2_256, crypto::Wraps, keccak_256, Pair};
 	use sp_runtime::traits::{BlakeTwo256, Keccak256};
 
 	#[test]

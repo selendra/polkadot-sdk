@@ -162,11 +162,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 
-extern crate alloc;
-
 use codec::{Decode, Encode};
 
-use alloc::{
+use sp_std::{
 	collections::btree_map::{BTreeMap, Entry, IntoIter},
 	vec::Vec,
 };

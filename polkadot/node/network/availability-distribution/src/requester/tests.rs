@@ -14,17 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-use futures::FutureExt;
-use std::{collections::HashMap, future::Future};
+use std::collections::HashMap;
 
-use polkadot_node_network_protocol::{jaeger, request_response::ReqProtocolNames};
+use std::future::Future;
+
+use futures::FutureExt;
+
+use polkadot_node_network_protocol::jaeger;
 use polkadot_node_primitives::{BlockData, ErasureChunk, PoV};
+use polkadot_node_subsystem_test_helpers::mock::new_leaf;
 use polkadot_node_subsystem_util::runtime::RuntimeInfo;
 use polkadot_primitives::{
-	BlockNumber, ChunkIndex, CoreState, ExecutorParams, GroupIndex, Hash, Id as ParaId,
+	vstaging::NodeFeatures, BlockNumber, CoreState, ExecutorParams, GroupIndex, Hash, Id as ParaId,
 	ScheduledCore, SessionIndex, SessionInfo,
 };
-use sp_core::{testing::TaskExecutor, traits::SpawnNamed};
+use sp_core::traits::SpawnNamed;
 
 use polkadot_node_subsystem::{
 	messages::{
@@ -34,21 +38,19 @@ use polkadot_node_subsystem::{
 	ActiveLeavesUpdate, SpawnGlue,
 };
 use polkadot_node_subsystem_test_helpers::{
-	make_subsystem_context,
-	mock::{make_ferdie_keystore, new_leaf},
-	TestSubsystemContext, TestSubsystemContextHandle,
+	make_subsystem_context, mock::make_ferdie_keystore, TestSubsystemContext,
+	TestSubsystemContextHandle,
 };
 
-use crate::tests::{
-	mock::{get_valid_chunk_data, make_session_info, OccupiedCoreBuilder},
-	node_features_with_mapping_enabled,
-};
+use sp_core::testing::TaskExecutor;
+
+use crate::tests::mock::{get_valid_chunk_data, make_session_info, OccupiedCoreBuilder};
 
 use super::Requester;
 
 fn get_erasure_chunk() -> ErasureChunk {
 	let pov = PoV { block_data: BlockData(vec![45, 46, 47]) };
-	get_valid_chunk_data(pov, 10, ChunkIndex(0)).1
+	get_valid_chunk_data(pov).1
 }
 
 #[derive(Clone)]
@@ -124,7 +126,7 @@ fn spawn_virtual_overseer(
 									.expect("Receiver should be alive.");
 							},
 							RuntimeApiRequest::NodeFeatures(_, tx) => {
-								tx.send(Ok(node_features_with_mapping_enabled()))
+								tx.send(Ok(NodeFeatures::EMPTY))
 									.expect("Receiver should be alive.");
 							},
 							RuntimeApiRequest::AvailabilityCores(tx) => {
@@ -144,8 +146,6 @@ fn spawn_virtual_overseer(
 													group_responsible: GroupIndex(1),
 													para_id,
 													relay_parent: hash,
-													n_validators: 10,
-													chunk_index: ChunkIndex(0),
 												}
 												.build()
 												.0,
@@ -201,8 +201,7 @@ fn test_harness<T: Future<Output = ()>>(
 #[test]
 fn check_ancestry_lookup_in_same_session() {
 	let test_state = TestState::new();
-	let mut requester =
-		Requester::new(ReqProtocolNames::new(&Hash::repeat_byte(0xff), None), Default::default());
+	let mut requester = Requester::new(Default::default());
 	let keystore = make_ferdie_keystore();
 	let mut runtime = RuntimeInfo::new(Some(keystore));
 
@@ -269,8 +268,7 @@ fn check_ancestry_lookup_in_same_session() {
 #[test]
 fn check_ancestry_lookup_in_different_sessions() {
 	let mut test_state = TestState::new();
-	let mut requester =
-		Requester::new(ReqProtocolNames::new(&Hash::repeat_byte(0xff), None), Default::default());
+	let mut requester = Requester::new(Default::default());
 	let keystore = make_ferdie_keystore();
 	let mut runtime = RuntimeInfo::new(Some(keystore));
 

@@ -22,7 +22,6 @@ use frame_support::{
 	weights::Weight,
 };
 use frame_system::{self, AccountInfo, EventRecord, Phase};
-use polkadot_sdk::*;
 use sp_core::{storage::well_known_keys, traits::Externalities};
 use sp_runtime::{
 	traits::Hash as HashT, transaction_validity::InvalidTransaction, ApplyExtrinsicResult,
@@ -155,7 +154,7 @@ fn blocks() -> ((Vec<u8>, Hash), (Vec<u8>, Hash)) {
 
 	// session change => consensus authorities change => authorities change digest item appears
 	let digest = Header::decode(&mut &block2.0[..]).unwrap().digest;
-	assert_eq!(digest.logs().len(), 2 /* Just babe and BEEFY slots */);
+	assert_eq!(digest.logs().len(), 1 /* Just babe slot */);
 
 	(block1, block2)
 }
@@ -839,16 +838,10 @@ fn should_import_block_with_test_client() {
 #[test]
 fn default_config_as_json_works() {
 	let mut t = new_test_ext(compact_code_unwrap());
-	let r = executor_call(
-		&mut t,
-		"GenesisBuilder_get_preset",
-		&None::<&sp_genesis_builder::PresetId>.encode(),
-	)
-	.0
-	.unwrap();
-	let r = Option::<Vec<u8>>::decode(&mut &r[..])
-		.unwrap()
-		.expect("default config is there");
+	let r = executor_call(&mut t, "GenesisBuilder_create_default_config", &vec![])
+		.0
+		.unwrap();
+	let r = Vec::<u8>::decode(&mut &r[..]).unwrap();
 	let json = String::from_utf8(r.into()).expect("returned value is json. qed.");
 	let expected = include_str!("res/default_genesis_config.json").to_string();
 

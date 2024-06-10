@@ -77,9 +77,9 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		PingSent(ParaId, u32, Vec<u8>, XcmHash, Assets),
+		PingSent(ParaId, u32, Vec<u8>, XcmHash, MultiAssets),
 		Pinged(ParaId, u32, Vec<u8>),
-		PongSent(ParaId, u32, Vec<u8>, XcmHash, Assets),
+		PongSent(ParaId, u32, Vec<u8>, XcmHash, MultiAssets),
 		Ponged(ParaId, u32, Vec<u8>, BlockNumberFor<T>),
 		ErrorSendingPing(SendError, ParaId, u32, Vec<u8>),
 		ErrorSendingPong(SendError, ParaId, u32, Vec<u8>),

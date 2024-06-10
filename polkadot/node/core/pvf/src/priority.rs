@@ -14,23 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-/// A priority assigned to preparation of a PVF.
+/// A priority assigned to execution of a PVF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
 	/// Normal priority for things that do not require immediate response, but still need to be
 	/// done pretty quick.
 	///
-	/// Backing falls into this category.
+	/// Approvals and disputes fall into this category.
 	Normal,
 	/// This priority is used for requests that are required to be processed as soon as possible.
 	///
-	/// Disputes and approvals are on a critical path and require execution as soon as
-	/// possible to not delay finality.
+	/// For example, backing is on a critical path and requires execution as soon as possible.
 	Critical,
 }
 
 impl Priority {
-	/// Returns `true` if `self` is `Critical`
+	/// Returns `true` if `self` is `Crticial`
 	pub fn is_critical(self) -> bool {
 		self == Priority::Critical
 	}

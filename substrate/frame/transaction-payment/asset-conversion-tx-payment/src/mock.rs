@@ -24,7 +24,6 @@ use frame_support::{
 	pallet_prelude::*,
 	parameter_types,
 	traits::{
-		fungible,
 		tokens::{
 			fungible::{NativeFromLeft, NativeOrWithId, UnionOf},
 			imbalance::ResolveAssetTo,
@@ -37,9 +36,10 @@ use frame_support::{
 use frame_system as system;
 use frame_system::{EnsureRoot, EnsureSignedBy};
 use pallet_asset_conversion::{Ascending, Chain, WithFirstAsset};
-use pallet_transaction_payment::FungibleAdapter;
+use pallet_transaction_payment::CurrencyAdapter;
+use sp_core::H256;
 use sp_runtime::{
-	traits::{AccountIdConversion, IdentityLookup, SaturatedConversion},
+	traits::{AccountIdConversion, BlakeTwo256, IdentityLookup, SaturatedConversion},
 	Permill,
 };
 
@@ -84,14 +84,31 @@ parameter_types! {
 	pub static TransactionByteFee: u64 = 1;
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
+	type BaseCallFilter = frame_support::traits::Everything;
 	type BlockWeights = BlockWeights;
+	type BlockLength = ();
+	type DbWeight = ();
+	type RuntimeOrigin = RuntimeOrigin;
 	type Nonce = u64;
+	type RuntimeCall = RuntimeCall;
+	type Hash = H256;
+	type Hashing = BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU64<250>;
+	type Version = ();
+	type PalletInfo = PalletInfo;
 	type AccountData = pallet_balances::AccountData<u64>;
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 parameter_types! {
@@ -112,6 +129,7 @@ impl pallet_balances::Config for Runtime {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type MaxHolds = ();
 }
 
 impl WeightToFeeT for WeightToFee {
@@ -138,13 +156,9 @@ parameter_types! {
 }
 
 pub struct DealWithFees;
-impl OnUnbalanced<fungible::Credit<<Runtime as frame_system::Config>::AccountId, Balances>>
-	for DealWithFees
-{
+impl OnUnbalanced<pallet_balances::NegativeImbalance<Runtime>> for DealWithFees {
 	fn on_unbalanceds<B>(
-		mut fees_then_tips: impl Iterator<
-			Item = fungible::Credit<<Runtime as frame_system::Config>::AccountId, Balances>,
-		>,
+		mut fees_then_tips: impl Iterator<Item = pallet_balances::NegativeImbalance<Runtime>>,
 	) {
 		if let Some(fees) = fees_then_tips.next() {
 			FeeUnbalancedAmount::mutate(|a| *a += fees.peek());
@@ -155,10 +169,9 @@ impl OnUnbalanced<fungible::Credit<<Runtime as frame_system::Config>::AccountId,
 	}
 }
 
-#[derive_impl(pallet_transaction_payment::config_preludes::TestDefaultConfig)]
 impl pallet_transaction_payment::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
-	type OnChargeTransaction = FungibleAdapter<Balances, DealWithFees>;
+	type OnChargeTransaction = CurrencyAdapter<Balances, DealWithFees>;
 	type WeightToFee = WeightToFee;
 	type LengthToFee = TransactionByteFee;
 	type FeeMultiplierUpdate = ();
@@ -226,11 +239,6 @@ ord_parameter_types! {
 	pub const AssetConversionOrigin: u64 = AccountIdConversion::<u64>::into_account_truncating(&AssetConversionPalletId::get());
 }
 
-pub type PoolIdToAccountId = pallet_asset_conversion::AccountIdConverter<
-	AssetConversionPalletId,
-	(NativeOrWithId<u32>, NativeOrWithId<u32>),
->;
-
 impl pallet_asset_conversion::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Balance = Balance;
@@ -239,8 +247,8 @@ impl pallet_asset_conversion::Config for Runtime {
 	type Assets = UnionOf<Balances, Assets, NativeFromLeft, NativeOrWithId<u32>, AccountId>;
 	type PoolId = (Self::AssetKind, Self::AssetKind);
 	type PoolLocator = Chain<
-		WithFirstAsset<Native, AccountId, NativeOrWithId<u32>, PoolIdToAccountId>,
-		Ascending<AccountId, NativeOrWithId<u32>, PoolIdToAccountId>,
+		WithFirstAsset<Native, AccountId, NativeOrWithId<u32>>,
+		Ascending<AccountId, NativeOrWithId<u32>>,
 	>;
 	type PoolAssetId = u32;
 	type PoolAssets = PoolAssets;

@@ -157,8 +157,6 @@ fn transaction_payment_in_asset_possible() {
 		.base_weight(Weight::from_parts(base_weight, 0))
 		.build()
 		.execute_with(|| {
-			System::set_block_number(1);
-
 			// create the asset
 			let asset_id = 1;
 			let min_balance = 2;
@@ -190,12 +188,6 @@ fn transaction_payment_in_asset_possible() {
 			assert_eq!(Assets::balance(asset_id, caller), balance - fee);
 			assert_eq!(Assets::balance(asset_id, BLOCK_AUTHOR), 0);
 
-			System::assert_has_event(RuntimeEvent::Assets(pallet_assets::Event::Withdrawn {
-				asset_id,
-				who: caller,
-				amount: fee,
-			}));
-
 			assert_ok!(ChargeAssetTxPayment::<Runtime>::post_dispatch(
 				Some(pre),
 				&info_from_weight(Weight::from_parts(weight, 0)),
@@ -206,12 +198,6 @@ fn transaction_payment_in_asset_possible() {
 			assert_eq!(Assets::balance(asset_id, caller), balance - fee);
 			// check that the block author gets rewarded
 			assert_eq!(Assets::balance(asset_id, BLOCK_AUTHOR), fee);
-
-			System::assert_has_event(RuntimeEvent::Assets(pallet_assets::Event::Deposited {
-				asset_id,
-				who: BLOCK_AUTHOR,
-				amount: fee,
-			}));
 		});
 }
 
@@ -277,8 +263,6 @@ fn asset_transaction_payment_with_tip_and_refund() {
 		.base_weight(Weight::from_parts(base_weight, 0))
 		.build()
 		.execute_with(|| {
-			System::set_block_number(1);
-
 			// create the asset
 			let asset_id = 1;
 			let min_balance = 2;
@@ -308,12 +292,6 @@ fn asset_transaction_payment_with_tip_and_refund() {
 				.unwrap();
 			assert_eq!(Assets::balance(asset_id, caller), balance - fee_with_tip);
 
-			System::assert_has_event(RuntimeEvent::Assets(pallet_assets::Event::Withdrawn {
-				asset_id,
-				who: caller,
-				amount: fee_with_tip,
-			}));
-
 			let final_weight = 50;
 			assert_ok!(ChargeAssetTxPayment::<Runtime>::post_dispatch(
 				Some(pre),
@@ -326,12 +304,6 @@ fn asset_transaction_payment_with_tip_and_refund() {
 				fee_with_tip - (weight - final_weight) * min_balance / ExistentialDeposit::get();
 			assert_eq!(Assets::balance(asset_id, caller), balance - (final_fee));
 			assert_eq!(Assets::balance(asset_id, BLOCK_AUTHOR), final_fee);
-
-			System::assert_has_event(RuntimeEvent::Assets(pallet_assets::Event::Deposited {
-				asset_id,
-				who: caller,
-				amount: fee_with_tip - final_fee,
-			}));
 		});
 }
 

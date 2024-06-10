@@ -24,26 +24,20 @@ mod runtime;
 #[cfg(doc)]
 pub use crate::wasm::runtime::api_doc;
 
+pub use crate::wasm::runtime::{
+	AllowDeprecatedInterface, AllowUnstableInterface, Environment, Runtime, RuntimeCosts,
+};
+
 #[cfg(test)]
-pub use {
-	crate::wasm::{prepare::tracker, runtime::ReturnErrorCode},
-	runtime::STABLE_API_COUNT,
-	tests::MockExt,
-};
+pub use tests::MockExt;
 
-#[cfg(feature = "runtime-benchmarks")]
-pub use crate::wasm::runtime::{BenchEnv, ReturnData, TrapReason};
-
-pub use crate::wasm::{
-	prepare::{LoadedModule, LoadingMode},
-	runtime::{
-		AllowDeprecatedInterface, AllowUnstableInterface, Environment, Runtime, RuntimeCosts,
-	},
-};
+#[cfg(test)]
+pub use crate::wasm::runtime::ReturnErrorCode;
 
 use crate::{
 	exec::{ExecResult, Executable, ExportedFunction, Ext},
 	gas::{GasMeter, Token},
+	wasm::prepare::LoadedModule,
 	weights::WeightInfo,
 	AccountIdOf, BadOrigin, BalanceOf, CodeHash, CodeInfoOf, CodeVec, Config, Error, Event,
 	HoldReason, Pallet, PristineCode, Schedule, Weight, LOG_TARGET,
@@ -57,7 +51,7 @@ use frame_support::{
 use sp_core::Get;
 use sp_runtime::{DispatchError, RuntimeDebug};
 use sp_std::prelude::*;
-use wasmi::{CompilationMode, InstancePre, Linker, Memory, MemoryType, StackLimits, Store};
+use wasmi::{InstancePre, Linker, Memory, MemoryType, StackLimits, Store};
 
 const BYTES_PER_PAGE: usize = 64 * 1024;
 
@@ -142,6 +136,11 @@ struct CodeLoadToken(u32);
 
 impl<T: Config> Token<T> for CodeLoadToken {
 	fn weight(&self) -> Weight {
+		// When loading the contract, we already covered the general costs of
+		// calling the storage but still need to account for the actual size of the
+		// contract code. This is why we subtract `T::*::(0)`. We need to do this at this
+		// point because when charging the general weight for calling the contract we don't know the
+		// size of the contract.
 		T::WeightInfo::call_with_code_per_byte(self.0)
 			.saturating_sub(T::WeightInfo::call_with_code_per_byte(0))
 	}
@@ -182,11 +181,10 @@ impl<T: Config> WasmBlob<T> {
 
 				*existing = None;
 				<PristineCode<T>>::remove(&code_hash);
-				<Pallet<T>>::deposit_event(Event::CodeRemoved {
-					code_hash,
-					deposit_released,
-					remover,
-				});
+				<Pallet<T>>::deposit_event(
+					vec![code_hash],
+					Event::CodeRemoved { code_hash, deposit_released, remover },
+				);
 				Ok(())
 			} else {
 				Err(<Error<T>>::CodeNotFound.into())
@@ -200,14 +198,17 @@ impl<T: Config> WasmBlob<T> {
 	/// When validating we pass `()` as `host_state`. Please note that such a dummy instance must
 	/// **never** be called/executed, since it will panic the executor.
 	pub fn instantiate<E, H>(
-		contract: LoadedModule,
+		code: &[u8],
 		host_state: H,
 		schedule: &Schedule<T>,
+		determinism: Determinism,
+		stack_limits: StackLimits,
 		allow_deprecated: AllowDeprecatedInterface,
 	) -> Result<(Store<H>, Memory, InstancePre), &'static str>
 	where
 		E: Environment<H>,
 	{
+		let contract = LoadedModule::new::<T>(&code, determinism, Some(stack_limits))?;
 		let mut store = Store::new(&contract.engine, host_state);
 		let mut linker = Linker::new(&contract.engine);
 		E::define(
@@ -239,10 +240,9 @@ impl<T: Config> WasmBlob<T> {
 			.define("env", "memory", memory)
 			.expect("We just created the Linker. It has no definitions with this name; qed");
 
-		let instance = linker.instantiate(&mut store, &contract.module).map_err(|err| {
-			log::debug!(target: LOG_TARGET, "failed to instantiate module: {:?}", err);
-			"can't instantiate module with provided definitions"
-		})?;
+		let instance = linker
+			.instantiate(&mut store, &contract.module)
+			.map_err(|_| "can't instantiate module with provided definitions")?;
 
 		Ok((store, memory, instance))
 	}
@@ -270,11 +270,14 @@ impl<T: Config> WasmBlob<T> {
 					self.code_info.refcount = 0;
 					<PristineCode<T>>::insert(code_hash, &self.code);
 					*stored_code_info = Some(self.code_info.clone());
-					<Pallet<T>>::deposit_event(Event::CodeStored {
-						code_hash,
-						deposit_held: deposit,
-						uploader: self.code_info.owner.clone(),
-					});
+					<Pallet<T>>::deposit_event(
+						vec![code_hash],
+						Event::CodeStored {
+							code_hash,
+							deposit_held: deposit,
+							uploader: self.code_info.owner.clone(),
+						},
+					);
 					Ok(deposit)
 				},
 			}
@@ -310,11 +313,6 @@ impl<T: Config> CodeInfo<T> {
 		}
 	}
 
-	/// Returns the determinism of the module.
-	pub fn determinism(&self) -> Determinism {
-		self.determinism
-	}
-
 	/// Returns reference count of the module.
 	pub fn refcount(&self) -> u64 {
 		self.refcount
@@ -328,123 +326,6 @@ impl<T: Config> CodeInfo<T> {
 	/// Returns the deposit of the module.
 	pub fn deposit(&self) -> BalanceOf<T> {
 		self.deposit
-	}
-}
-
-use crate::{ExecError, ExecReturnValue};
-use wasmi::Func;
-enum InstanceOrExecReturn<'a, E: Ext> {
-	Instance((Func, Store<Runtime<'a, E>>)),
-	ExecReturn(ExecReturnValue),
-}
-
-type PreExecResult<'a, E> = Result<InstanceOrExecReturn<'a, E>, ExecError>;
-
-impl<T: Config> WasmBlob<T> {
-	/// Sync the frame's gas meter with the engine's one.
-	pub fn process_result<E: Ext<T = T>>(
-		mut store: Store<Runtime<E>>,
-		result: Result<(), wasmi::Error>,
-	) -> ExecResult {
-		let engine_fuel = store.get_fuel().expect("Fuel metering is enabled; qed");
-		let gas_meter = store.data_mut().ext().gas_meter_mut();
-		let _ = gas_meter.sync_from_executor(engine_fuel)?;
-		store.into_data().to_execution_result(result)
-	}
-
-	#[cfg(feature = "runtime-benchmarks")]
-	pub fn bench_prepare_call<E: Ext<T = T>>(
-		self,
-		ext: &mut E,
-		input_data: Vec<u8>,
-	) -> (Func, Store<Runtime<E>>) {
-		use InstanceOrExecReturn::*;
-		match Self::prepare_execute(
-			self,
-			Runtime::new(ext, input_data),
-			&ExportedFunction::Call,
-			CompilationMode::Eager,
-		)
-		.expect("Benchmark should provide valid module")
-		{
-			Instance((func, store)) => (func, store),
-			ExecReturn(_) => panic!("Expected Instance"),
-		}
-	}
-
-	fn prepare_execute<'a, E: Ext<T = T>>(
-		self,
-		runtime: Runtime<'a, E>,
-		function: &'a ExportedFunction,
-		compilation_mode: CompilationMode,
-	) -> PreExecResult<'a, E> {
-		let code = self.code.as_slice();
-		// Instantiate the Wasm module to the engine.
-		let schedule = <T>::Schedule::get();
-
-		let contract = LoadedModule::new::<T>(
-			&code,
-			self.code_info.determinism,
-			Some(StackLimits::default()),
-			LoadingMode::Unchecked,
-			compilation_mode,
-		)
-		.map_err(|err| {
-			log::debug!(target: LOG_TARGET, "failed to create wasmi module: {err:?}");
-			Error::<T>::CodeRejected
-		})?;
-
-		let (mut store, memory, instance) = Self::instantiate::<crate::wasm::runtime::Env, _>(
-			contract,
-			runtime,
-			&schedule,
-			match function {
-				ExportedFunction::Call => AllowDeprecatedInterface::Yes,
-				ExportedFunction::Constructor => AllowDeprecatedInterface::No,
-			},
-		)
-		.map_err(|msg| {
-			log::debug!(target: LOG_TARGET, "failed to instantiate code to wasmi: {}", msg);
-			Error::<T>::CodeRejected
-		})?;
-		store.data_mut().set_memory(memory);
-
-		// Set fuel limit for the wasmi execution.
-		// We normalize it by the base instruction weight, as its cost in wasmi engine is `1`.
-		let fuel_limit = store
-			.data_mut()
-			.ext()
-			.gas_meter_mut()
-			.gas_left()
-			.ref_time()
-			.checked_div(T::Schedule::get().ref_time_by_fuel())
-			.ok_or(Error::<T>::InvalidSchedule)?;
-		store
-			.set_fuel(fuel_limit)
-			.expect("We've set up engine to fuel consuming mode; qed");
-
-		// Start function should already see the correct refcount in case it will be ever inspected.
-		if let &ExportedFunction::Constructor = function {
-			E::increment_refcount(self.code_hash)?;
-		}
-
-		// Any abort in start function (includes `return` + `terminate`) will make us skip the
-		// call into the subsequent exported function. This means that calling `return` returns data
-		// from the whole contract execution.
-		match instance.start(&mut store) {
-			Ok(instance) => {
-				let exported_func = instance
-					.get_export(&store, function.identifier())
-					.and_then(|export| export.into_func())
-					.ok_or_else(|| {
-						log::error!(target: LOG_TARGET, "failed to find entry point");
-						Error::<T>::CodeRejected
-					})?;
-
-				Ok(InstanceOrExecReturn::Instance((exported_func, store)))
-			},
-			Err(err) => Self::process_result(store, Err(err)).map(InstanceOrExecReturn::ExecReturn),
-		}
 	}
 }
 
@@ -465,18 +346,72 @@ impl<T: Config> Executable<T> for WasmBlob<T> {
 		function: &ExportedFunction,
 		input_data: Vec<u8>,
 	) -> ExecResult {
-		use InstanceOrExecReturn::*;
-		match Self::prepare_execute(
-			self,
-			Runtime::new(ext, input_data),
-			function,
-			CompilationMode::Lazy,
-		)? {
-			Instance((func, mut store)) => {
-				let result = func.call(&mut store, &[], &mut []);
-				Self::process_result(store, result)
+		let code = self.code.as_slice();
+		// Instantiate the Wasm module to the engine.
+		let runtime = Runtime::new(ext, input_data);
+		let schedule = <T>::Schedule::get();
+		let (mut store, memory, instance) = Self::instantiate::<crate::wasm::runtime::Env, _>(
+			code,
+			runtime,
+			&schedule,
+			self.code_info.determinism,
+			StackLimits::default(),
+			match function {
+				ExportedFunction::Call => AllowDeprecatedInterface::Yes,
+				ExportedFunction::Constructor => AllowDeprecatedInterface::No,
 			},
-			ExecReturn(exec_return) => Ok(exec_return),
+		)
+		.map_err(|msg| {
+			log::debug!(target: LOG_TARGET, "failed to instantiate code to wasmi: {}", msg);
+			Error::<T>::CodeRejected
+		})?;
+		store.data_mut().set_memory(memory);
+
+		// Set fuel limit for the wasmi execution.
+		// We normalize it by the base instruction weight, as its cost in wasmi engine is `1`.
+		let fuel_limit = store
+			.data_mut()
+			.ext()
+			.gas_meter_mut()
+			.gas_left()
+			.ref_time()
+			.checked_div(T::Schedule::get().instruction_weights.base as u64)
+			.ok_or(Error::<T>::InvalidSchedule)?;
+		store
+			.add_fuel(fuel_limit)
+			.expect("We've set up engine to fuel consuming mode; qed");
+
+		// Sync this frame's gas meter with the engine's one.
+		let process_result = |mut store: Store<Runtime<E>>, result| {
+			let engine_consumed_total =
+				store.fuel_consumed().expect("Fuel metering is enabled; qed");
+			let gas_meter = store.data_mut().ext().gas_meter_mut();
+			let _ = gas_meter.sync_from_executor(engine_consumed_total)?;
+			store.into_data().to_execution_result(result)
+		};
+
+		// Start function should already see the correct refcount in case it will be ever inspected.
+		if let &ExportedFunction::Constructor = function {
+			E::increment_refcount(self.code_hash)?;
+		}
+
+		// Any abort in start function (includes `return` + `terminate`) will make us skip the
+		// call into the subsequent exported function. This means that calling `return` returns data
+		// from the whole contract execution.
+		match instance.start(&mut store) {
+			Ok(instance) => {
+				let exported_func = instance
+					.get_export(&store, function.identifier())
+					.and_then(|export| export.into_func())
+					.ok_or_else(|| {
+						log::error!(target: LOG_TARGET, "failed to find entry point");
+						Error::<T>::CodeRejected
+					})?;
+
+				let result = exported_func.call(&mut store, &[], &mut []);
+				process_result(store, result)
+			},
+			Err(err) => process_result(store, Err(err)),
 		}
 	}
 
@@ -552,7 +487,6 @@ mod tests {
 		value: u64,
 		data: Vec<u8>,
 		allows_reentry: bool,
-		read_only: bool,
 	}
 
 	#[derive(Debug, PartialEq, Eq)]
@@ -620,9 +554,8 @@ mod tests {
 			value: u64,
 			data: Vec<u8>,
 			allows_reentry: bool,
-			read_only: bool,
 		) -> Result<ExecReturnValue, ExecError> {
-			self.calls.push(CallEntry { to, value, data, allows_reentry, read_only });
+			self.calls.push(CallEntry { to, value, data, allows_reentry });
 			Ok(ExecReturnValue { flags: ReturnFlags::empty(), data: call_return_data() })
 		}
 		fn delegate_call(
@@ -654,15 +587,15 @@ mod tests {
 				ExecReturnValue { flags: ReturnFlags::empty(), data: Vec::new() },
 			))
 		}
-		fn set_code_hash(&mut self, hash: CodeHash<Self::T>) -> DispatchResult {
+		fn set_code_hash(&mut self, hash: CodeHash<Self::T>) -> Result<(), DispatchError> {
 			self.code_hashes.push(hash);
 			Ok(())
 		}
-		fn transfer(&mut self, to: &AccountIdOf<Self::T>, value: u64) -> DispatchResult {
+		fn transfer(&mut self, to: &AccountIdOf<Self::T>, value: u64) -> Result<(), DispatchError> {
 			self.transfers.push(TransferEntry { to: to.clone(), value });
 			Ok(())
 		}
-		fn terminate(&mut self, beneficiary: &AccountIdOf<Self::T>) -> DispatchResult {
+		fn terminate(&mut self, beneficiary: &AccountIdOf<Self::T>) -> Result<(), DispatchError> {
 			self.terminations.push(TerminationEntry { beneficiary: beneficiary.clone() });
 			Ok(())
 		}
@@ -754,10 +687,6 @@ mod tests {
 			&mut self.gas_meter
 		}
 		fn charge_storage(&mut self, _diff: &crate::storage::meter::Diff) {}
-
-		fn debug_buffer_enabled(&self) -> bool {
-			true
-		}
 		fn append_debug_buffer(&mut self, msg: &str) -> bool {
 			self.debug_buffer.extend(msg.as_bytes());
 			true
@@ -796,25 +725,23 @@ mod tests {
 		fn nonce(&mut self) -> u64 {
 			995
 		}
-		fn increment_refcount(_code_hash: CodeHash<Self::T>) -> DispatchResult {
+		fn increment_refcount(_code_hash: CodeHash<Self::T>) -> Result<(), DispatchError> {
 			Ok(())
 		}
 		fn decrement_refcount(_code_hash: CodeHash<Self::T>) {}
-		fn lock_delegate_dependency(&mut self, code: CodeHash<Self::T>) -> DispatchResult {
+		fn add_delegate_dependency(
+			&mut self,
+			code: CodeHash<Self::T>,
+		) -> Result<(), DispatchError> {
 			self.delegate_dependencies.borrow_mut().insert(code);
 			Ok(())
 		}
-		fn unlock_delegate_dependency(&mut self, code: &CodeHash<Self::T>) -> DispatchResult {
+		fn remove_delegate_dependency(
+			&mut self,
+			code: &CodeHash<Self::T>,
+		) -> Result<(), DispatchError> {
 			self.delegate_dependencies.borrow_mut().remove(code);
 			Ok(())
-		}
-
-		fn locked_delegate_dependencies_count(&mut self) -> usize {
-			self.delegate_dependencies.borrow().len()
-		}
-
-		fn is_read_only(&self) -> bool {
-			false
 		}
 	}
 
@@ -997,13 +924,7 @@ mod tests {
 
 		assert_eq!(
 			&mock_ext.calls,
-			&[CallEntry {
-				to: ALICE,
-				value: 6,
-				data: vec![1, 2, 3, 4],
-				allows_reentry: true,
-				read_only: false
-			}]
+			&[CallEntry { to: ALICE, value: 6, data: vec![1, 2, 3, 4], allows_reentry: true }]
 		);
 	}
 
@@ -1100,13 +1021,7 @@ mod tests {
 
 		assert_eq!(
 			&mock_ext.calls,
-			&[CallEntry {
-				to: ALICE,
-				value: 0x2a,
-				data: input,
-				allows_reentry: false,
-				read_only: false
-			}]
+			&[CallEntry { to: ALICE, value: 0x2a, data: input, allows_reentry: false }]
 		);
 	}
 
@@ -1161,13 +1076,7 @@ mod tests {
 		assert_eq!(result.data, input);
 		assert_eq!(
 			&mock_ext.calls,
-			&[CallEntry {
-				to: ALICE,
-				value: 0x2a,
-				data: input,
-				allows_reentry: true,
-				read_only: false
-			}]
+			&[CallEntry { to: ALICE, value: 0x2a, data: input, allows_reentry: true }]
 		);
 	}
 
@@ -1214,13 +1123,7 @@ mod tests {
 		assert_eq!(result.data, call_return_data());
 		assert_eq!(
 			&mock_ext.calls,
-			&[CallEntry {
-				to: ALICE,
-				value: 0x2a,
-				data: input,
-				allows_reentry: false,
-				read_only: false
-			}]
+			&[CallEntry { to: ALICE, value: 0x2a, data: input, allows_reentry: false }]
 		);
 	}
 
@@ -1461,13 +1364,7 @@ mod tests {
 
 		assert_eq!(
 			&mock_ext.calls,
-			&[CallEntry {
-				to: ALICE,
-				value: 6,
-				data: vec![1, 2, 3, 4],
-				allows_reentry: true,
-				read_only: false
-			}]
+			&[CallEntry { to: ALICE, value: 6, data: vec![1, 2, 3, 4], allows_reentry: true }]
 		);
 	}
 
@@ -1516,7 +1413,7 @@ mod tests {
 
 	#[test]
 	fn contract_ecdsa_to_eth_address() {
-		/// calls `seal_ecdsa_to_eth_address` for the constant and ensures the result equals the
+		/// calls `seal_ecdsa_to_eth_address` for the contstant and ensures the result equals the
 		/// expected one.
 		const CODE_ECDSA_TO_ETH_ADDRESS: &str = r#"
 (module
@@ -1870,7 +1767,6 @@ mod tests {
 	const CODE_GAS_LEFT: &str = r#"
 (module
 	(import "seal1" "gas_left" (func $seal_gas_left (param i32 i32)))
-	(import "seal0" "clear_storage" (func $clear_storage (param i32)))
 	(import "seal0" "seal_return" (func $seal_return (param i32 i32 i32)))
 	(import "env" "memory" (memory 1 1))
 
@@ -1887,9 +1783,6 @@ mod tests {
 	)
 
 	(func (export "call")
-		;; Burn some PoV, clear_storage consumes some PoV as in order to clear the storage we need to we need to read its size first.
-		(call $clear_storage (i32.const 0))
-
 		;; This stores the weight left to the buffer
 		(call $seal_gas_left (i32.const 0) (i32.const 20))
 
@@ -1900,9 +1793,6 @@ mod tests {
 				(i32.const 16)
 			)
 		)
-
-		;; Burn some PoV, clear_storage consumes some PoV as in order to clear the storage we need to we need to read its size first.
-		(call $clear_storage (i32.const 0))
 
 		;; Return weight left and its encoded value len
 		(call $seal_return (i32.const 0) (i32.const 0) (i32.load (i32.const 20)))
@@ -1925,6 +1815,17 @@ mod tests {
 
 		assert!(weight_left.all_lt(gas_limit), "gas_left must be less than initial");
 		assert!(weight_left.all_gt(actual_left), "gas_left must be greater than final");
+	}
+
+	/// Test that [`frame_support::weights::OldWeight`] en/decodes the same as our
+	/// [`crate::OldWeight`].
+	#[test]
+	fn old_weight_decode() {
+		#![allow(deprecated)]
+		let sp = frame_support::weights::OldWeight(42).encode();
+		let our = crate::OldWeight::decode(&mut &*sp).unwrap();
+
+		assert_eq!(our, 42);
 	}
 
 	const CODE_VALUE_TRANSFERRED: &str = r#"
@@ -2559,7 +2460,7 @@ mod tests {
 		assert_eq!(
 			result,
 			Err(ExecError {
-				error: Error::<Test>::DecodingFailed.into(),
+				error: Error::<Test>::OutOfBounds.into(),
 				origin: ErrorOrigin::Caller,
 			})
 		);
@@ -3494,16 +3395,16 @@ mod tests {
 	}
 
 	#[test]
-	fn lock_unlock_delegate_dependency() {
-		const CODE_LOCK_UNLOCK_DELEGATE_DEPENDENCY: &str = r#"
+	fn add_remove_delegate_dependency() {
+		const CODE_ADD_REMOVE_DELEGATE_DEPENDENCY: &str = r#"
 (module
-	(import "seal0" "lock_delegate_dependency" (func $lock_delegate_dependency (param i32)))
-	(import "seal0" "unlock_delegate_dependency" (func $unlock_delegate_dependency (param i32)))
+	(import "seal0" "add_delegate_dependency" (func $add_delegate_dependency (param i32)))
+	(import "seal0" "remove_delegate_dependency" (func $remove_delegate_dependency (param i32)))
 	(import "env" "memory" (memory 1 1))
 	(func (export "call")
-		(call $lock_delegate_dependency (i32.const 0))
-		(call $lock_delegate_dependency (i32.const 32))
-		(call $unlock_delegate_dependency (i32.const 32))
+		(call $add_delegate_dependency (i32.const 0))
+		(call $add_delegate_dependency (i32.const 32))
+		(call $remove_delegate_dependency (i32.const 32))
 	)
 	(func (export "deploy"))
 
@@ -3521,44 +3422,10 @@ mod tests {
 )
 "#;
 		let mut mock_ext = MockExt::default();
-		assert_ok!(execute(&CODE_LOCK_UNLOCK_DELEGATE_DEPENDENCY, vec![], &mut mock_ext));
+		assert_ok!(execute(&CODE_ADD_REMOVE_DELEGATE_DEPENDENCY, vec![], &mut mock_ext));
 		let delegate_dependencies: Vec<_> =
 			mock_ext.delegate_dependencies.into_inner().into_iter().collect();
 		assert_eq!(delegate_dependencies.len(), 1);
 		assert_eq!(delegate_dependencies[0].as_bytes(), [1; 32]);
-	}
-
-	// This test checks that [`Runtime::read_sandbox_memory_as`] works, when the decoded type has a
-	// max_len greater than the memory size, but the decoded data fits into the memory.
-	#[test]
-	fn read_sandbox_memory_as_works_with_max_len_out_of_bounds_but_fitting_actual_data() {
-		use frame_support::BoundedVec;
-		use sp_core::ConstU32;
-
-		let mut ext = MockExt::default();
-		let runtime = Runtime::new(&mut ext, vec![]);
-		let data = vec![1u8, 2, 3];
-		let memory = data.encode();
-		let decoded: BoundedVec<u8, ConstU32<128>> =
-			runtime.read_sandbox_memory_as(&memory, 0u32).unwrap();
-		assert_eq!(decoded.into_inner(), data);
-	}
-
-	#[test]
-	fn run_out_of_gas_in_start_fn() {
-		const CODE: &str = r#"
-(module
-	(import "env" "memory" (memory 1 1))
-	(start $start)
-	(func $start
-		(loop $inf (br $inf)) ;; just run out of gas
-		(unreachable)
-	)
-	(func (export "call"))
-	(func (export "deploy"))
-)
-"#;
-		let mut mock_ext = MockExt::default();
-		assert_err!(execute(&CODE, vec![], &mut mock_ext), <Error<Test>>::OutOfGas);
 	}
 }

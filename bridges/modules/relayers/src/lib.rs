@@ -21,8 +21,7 @@
 #![warn(missing_docs)]
 
 use bp_relayers::{
-	ExplicitOrAccountParams, PaymentProcedure, Registration, RelayerRewardsKeyProvider,
-	RewardsAccountParams, StakeAndSlash,
+	PaymentProcedure, Registration, RelayerRewardsKeyProvider, RewardsAccountParams, StakeAndSlash,
 };
 use bp_runtime::StorageDoubleMapKeyProvider;
 use frame_support::fail;
@@ -243,7 +242,7 @@ pub mod pallet {
 		/// It may fail inside, but error is swallowed and we only log it.
 		pub fn slash_and_deregister(
 			relayer: &T::AccountId,
-			slash_destination: ExplicitOrAccountParams<T::AccountId>,
+			slash_destination: RewardsAccountParams,
 		) {
 			let registration = match RegisteredRelayers::<T>::take(relayer) {
 				Some(registration) => registration,
@@ -260,7 +259,7 @@ pub mod pallet {
 
 			match T::StakeAndSlash::repatriate_reserved(
 				relayer,
-				slash_destination.clone(),
+				slash_destination,
 				registration.stake,
 			) {
 				Ok(failed_to_slash) if failed_to_slash.is_zero() => {

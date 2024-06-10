@@ -40,8 +40,6 @@ enum NemesisVariant {
 	DisputeAncestor(DisputeAncestorOptions),
 	/// Delayed disputing of finalized candidates.
 	DisputeFinalizedCandidates(DisputeFinalizedCandidatesOptions),
-	/// Spam many request statements instead of sending a single one.
-	SpamStatementRequests(SpamStatementRequestsOptions),
 }
 
 #[derive(Debug, Parser)]
@@ -99,11 +97,6 @@ impl MalusCli {
 					DisputeFinalizedCandidates { dispute_offset },
 					finality_delay,
 				)?
-			},
-			NemesisVariant::SpamStatementRequests(opts) => {
-				let SpamStatementRequestsOptions { spam_factor, cli } = opts;
-
-				polkadot_cli::run_node(cli, SpamStatementRequests { spam_factor }, finality_delay)?
 			},
 		}
 		Ok(())

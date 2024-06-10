@@ -15,14 +15,13 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 use crate::{
-	configuration,
 	inclusion::{
 		tests::run_to_block_default_notifications as run_to_block, AggregateMessageOrigin,
 		AggregateMessageOrigin::Ump, UmpAcceptanceCheckErr, UmpQueueId,
 	},
 	mock::{
-		assert_last_event, assert_last_events, new_test_ext, MessageQueue, MessageQueueSize,
-		MockGenesisConfig, ParaInclusion, Processed, System, Test, *,
+		assert_last_event, assert_last_events, new_test_ext, Configuration, MessageQueue,
+		MessageQueueSize, MockGenesisConfig, ParaInclusion, Processed, System, Test, *,
 	},
 };
 use frame_support::{
@@ -31,8 +30,9 @@ use frame_support::{
 	traits::{EnqueueMessage, ExecuteOverweightError, ServiceQueues},
 	weights::Weight,
 };
-use polkadot_primitives::{well_known_keys, Id as ParaId, UpwardMessage};
-use sp_crypto_hashing::{blake2_256, twox_64};
+use primitives::{well_known_keys, Id as ParaId, UpwardMessage};
+use sp_core::twox_64;
+use sp_io::hashing::blake2_256;
 use sp_runtime::traits::Bounded;
 use sp_std::prelude::*;
 
@@ -89,7 +89,7 @@ fn queue_upward_msg(para: ParaId, msg: UpwardMessage) {
 
 fn try_queue_upward_msg(para: ParaId, msg: UpwardMessage) -> Result<(), UmpAcceptanceCheckErr> {
 	let msgs = vec![msg];
-	ParaInclusion::check_upward_messages(&configuration::ActiveConfig::<Test>::get(), para, &msgs)?;
+	ParaInclusion::check_upward_messages(&Configuration::config(), para, &msgs)?;
 	ParaInclusion::receive_upward_messages(para, msgs.as_slice());
 	Ok(())
 }
@@ -108,12 +108,7 @@ mod check_upward_messages {
 	/// Check that these messages *could* be queued.
 	fn check(para: ParaId, msgs: Vec<UpwardMessage>, err: Option<UmpAcceptanceCheckErr>) {
 		assert_eq!(
-			ParaInclusion::check_upward_messages(
-				&configuration::ActiveConfig::<Test>::get(),
-				para,
-				&msgs[..]
-			)
-			.err(),
+			ParaInclusion::check_upward_messages(&Configuration::config(), para, &msgs[..]).err(),
 			err
 		);
 	}
@@ -138,8 +133,7 @@ mod check_upward_messages {
 	fn num_per_candidate_exceeded_error() {
 		new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
 			let _g = frame_support::StorageNoopGuard::default();
-			let permitted =
-				configuration::ActiveConfig::<Test>::get().max_upward_message_num_per_candidate;
+			let permitted = Configuration::config().max_upward_message_num_per_candidate;
 
 			for sent in 0..permitted + 1 {
 				check(P_0, vec![msg(""); sent as usize], None);
@@ -158,9 +152,8 @@ mod check_upward_messages {
 	fn size_per_message_exceeded_error() {
 		new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
 			let _g = frame_support::StorageNoopGuard::default();
-			let max_size = configuration::ActiveConfig::<Test>::get().max_upward_message_size;
-			let max_per_candidate =
-				configuration::ActiveConfig::<Test>::get().max_upward_message_num_per_candidate;
+			let max_size = Configuration::config().max_upward_message_size;
+			let max_per_candidate = Configuration::config().max_upward_message_num_per_candidate;
 
 			for msg_size in 0..=max_size {
 				check(P_0, vec![vec![0; msg_size as usize]], None);
@@ -183,7 +176,7 @@ mod check_upward_messages {
 	#[test]
 	fn queue_count_exceeded_error() {
 		new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
-			let limit = configuration::ActiveConfig::<Test>::get().max_upward_queue_count as u64;
+			let limit = Configuration::config().max_upward_queue_count as u64;
 
 			for _ in 0..limit {
 				check(P_0, vec![msg("")], None);
@@ -206,10 +199,10 @@ mod check_upward_messages {
 	#[test]
 	fn queue_size_exceeded_error() {
 		new_test_ext(GenesisConfigBuilder::large_queue_count().build()).execute_with(|| {
-			let limit = configuration::ActiveConfig::<Test>::get().max_upward_queue_size as u64;
+			let limit = Configuration::config().max_upward_queue_size as u64;
 			assert_eq!(pallet_message_queue::ItemHeader::<MessageQueueSize>::max_encoded_len(), 5);
 			assert!(
-				configuration::ActiveConfig::<Test>::get().max_upward_queue_size <
+				Configuration::config().max_upward_queue_size <
 					crate::inclusion::MaxUmpMessageLenOf::<Test>::get(),
 				"Test will not work"
 			);
@@ -359,7 +352,7 @@ fn queue_enact_too_long_ignored() {
 #[test]
 fn relay_dispatch_queue_size_is_updated() {
 	new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
-		let cfg = configuration::ActiveConfig::<Test>::get();
+		let cfg = Configuration::config();
 
 		for p in 0..100 {
 			let para = p.into();
@@ -426,7 +419,7 @@ fn relay_dispatch_queue_size_key_is_correct() {
 		// A "random" para id.
 		let para: ParaId = u32::from_ne_bytes(twox_64(&i.encode())[..4].try_into().unwrap()).into();
 
-		let well_known = polkadot_primitives::well_known_keys::relay_dispatch_queue_size(para);
+		let well_known = primitives::well_known_keys::relay_dispatch_queue_size(para);
 		let aliased = RelayDispatchQueueSize::hashed_key_for(para);
 
 		assert_eq!(well_known, aliased, "Old and new key must match");
@@ -438,7 +431,7 @@ fn verify_relay_dispatch_queue_size_is_externally_accessible() {
 	// Make sure that the relay dispatch queue size storage entry is accessible via well known
 	// keys and is decodable into a (u32, u32).
 	new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
-		let cfg = configuration::ActiveConfig::<Test>::get();
+		let cfg = Configuration::config();
 
 		for para in 0..10 {
 			let para = para.into();
@@ -464,7 +457,7 @@ fn verify_relay_dispatch_queue_size_is_externally_accessible() {
 fn assert_queue_size(para: ParaId, count: u32, size: u32) {
 	#[allow(deprecated)]
 	let raw_queue_size = sp_io::storage::get(&well_known_keys::relay_dispatch_queue_size(para)).expect(
-		"enqueuing a message should create the dispatch queue\
+		"enqueing a message should create the dispatch queue\
 				and it should be accessible via the well known keys",
 	);
 	let (c, s) = <(u32, u32)>::decode(&mut &raw_queue_size[..])
@@ -474,7 +467,7 @@ fn assert_queue_size(para: ParaId, count: u32, size: u32) {
 	// Test the deprecated but at least type-safe `relay_dispatch_queue_size_typed`:
 	#[allow(deprecated)]
 	let (c, s) = well_known_keys::relay_dispatch_queue_size_typed(para).get().expect(
-		"enqueuing a message should create the dispatch queue\
+		"enqueing a message should create the dispatch queue\
 				and it should be accessible via the well known keys",
 	);
 	assert_eq!((c, s), (count, size));
@@ -512,10 +505,6 @@ fn overweight_queue_works() {
 	let a_msg_2 = (501u32, "a_msg_2").encode();
 	let a_msg_3 = (501u32, "a_msg_3").encode();
 
-	let hash_1 = blake2_256(&a_msg_1[..]);
-	let hash_2 = blake2_256(&a_msg_2[..]);
-	let hash_3 = blake2_256(&a_msg_3[..]);
-
 	new_test_ext(GenesisConfigBuilder::default().build()).execute_with(|| {
 		// HACK: Start with the block number 1. This is needed because should an event be
 		// emitted during the genesis block they will be implicitly wiped.
@@ -528,6 +517,9 @@ fn overweight_queue_works() {
 		queue_upward_msg(para_a, a_msg_3.clone());
 
 		MessageQueue::service_queues(Weight::from_parts(500, 500));
+		let hash_1 = blake2_256(&a_msg_1[..]);
+		let hash_2 = blake2_256(&a_msg_2[..]);
+		let hash_3 = blake2_256(&a_msg_3[..]);
 		assert_last_events(
 			[
 				pallet_message_queue::Event::<Test>::Processed {

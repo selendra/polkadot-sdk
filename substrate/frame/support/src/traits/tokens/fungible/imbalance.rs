@@ -17,8 +17,6 @@
 
 //! The imbalance type and its associates, which handles keeps everything adding up properly with
 //! unbalanced operations.
-//!
-//! See the [`crate::traits::fungible`] doc for more information about fungible traits.
 
 use super::{super::Imbalance as ImbalanceT, Balanced, *};
 use crate::traits::{

@@ -20,13 +20,12 @@
 
 pub mod error;
 
-use error::Error;
-use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use sp_core::Bytes;
 
 #[rpc(client, server)]
 pub trait MixnetApi {
 	/// Submit encoded extrinsic over the mixnet for inclusion in block.
 	#[method(name = "mixnet_submitExtrinsic")]
-	async fn submit_extrinsic(&self, extrinsic: Bytes) -> Result<(), Error>;
+	async fn submit_extrinsic(&self, extrinsic: Bytes) -> RpcResult<()>;
 }

@@ -125,6 +125,7 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::unbounded] // optional
 	#[pallet::storage_prefix = "OtherFoo"] // optional
+	#[pallet::getter(fn foo)] // optional
 	pub type Foo<T> = StorageValue<Value = u32>;
 
 	#[pallet::type_value]

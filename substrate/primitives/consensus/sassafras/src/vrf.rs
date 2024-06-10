@@ -18,10 +18,9 @@
 //! Utilities related to VRF input, pre-output and signatures.
 
 use crate::{Randomness, TicketBody, TicketId};
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-use codec::Encode;
+use scale_codec::Encode;
 use sp_consensus_slots::Slot;
+use sp_std::vec::Vec;
 
 pub use sp_core::bandersnatch::{
 	ring_vrf::{RingProver, RingVerifier, RingVerifierData, RingVrfSignature},
@@ -101,7 +100,7 @@ pub fn make_ticket_id(input: &VrfInput, pre_output: &VrfPreOutput) -> TicketId {
 	u128::from_le_bytes(bytes)
 }
 
-/// Make revealed key seed from a given VRF input and pre-output.
+/// Make revealed key seed from a given VRF input and pre-ouput.
 ///
 /// Input should have been obtained via [`revealed_key_input`].
 /// Pre-output should have been obtained from the input directly using the vrf

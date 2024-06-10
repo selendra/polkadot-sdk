@@ -129,16 +129,6 @@ use sp_externalities::{Externalities, ExternalitiesExt};
 
 pub use sp_externalities::MultiRemovalResults;
 
-#[cfg(all(not(feature = "disable_allocator"), substrate_runtime, target_family = "wasm"))]
-mod global_alloc_wasm;
-
-#[cfg(all(
-	not(feature = "disable_allocator"),
-	substrate_runtime,
-	any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-mod global_alloc_riscv;
-
 #[cfg(feature = "std")]
 const LOG_TARGET: &str = "runtime::io";
 
@@ -182,7 +172,7 @@ impl From<MultiRemovalResults> for KillStorageResult {
 pub trait Storage {
 	/// Returns the data for `key` in the storage or `None` if the key can not be found.
 	fn get(&self, key: &[u8]) -> Option<bytes::Bytes> {
-		self.storage(key).map(bytes::Bytes::from)
+		self.storage(key).map(|s| bytes::Bytes::from(s.to_vec()))
 	}
 
 	/// Get `key` from storage, placing the value into `value_out` and return the number of
@@ -1081,7 +1071,7 @@ pub trait Crypto {
 	/// Register a `ecdsa` signature for batch verification.
 	///
 	/// Batch verification must be enabled by calling [`start_batch_verify`].
-	/// If batch verification is not enabled, the signature will be verified immediately.
+	/// If batch verification is not enabled, the signature will be verified immediatley.
 	/// To get the result of the batch verification, [`finish_batch_verify`]
 	/// needs to be called.
 	///
@@ -1261,42 +1251,42 @@ pub trait Crypto {
 pub trait Hashing {
 	/// Conduct a 256-bit Keccak hash.
 	fn keccak_256(data: &[u8]) -> [u8; 32] {
-		sp_crypto_hashing::keccak_256(data)
+		sp_core::hashing::keccak_256(data)
 	}
 
 	/// Conduct a 512-bit Keccak hash.
 	fn keccak_512(data: &[u8]) -> [u8; 64] {
-		sp_crypto_hashing::keccak_512(data)
+		sp_core::hashing::keccak_512(data)
 	}
 
 	/// Conduct a 256-bit Sha2 hash.
 	fn sha2_256(data: &[u8]) -> [u8; 32] {
-		sp_crypto_hashing::sha2_256(data)
+		sp_core::hashing::sha2_256(data)
 	}
 
 	/// Conduct a 128-bit Blake2 hash.
 	fn blake2_128(data: &[u8]) -> [u8; 16] {
-		sp_crypto_hashing::blake2_128(data)
+		sp_core::hashing::blake2_128(data)
 	}
 
 	/// Conduct a 256-bit Blake2 hash.
 	fn blake2_256(data: &[u8]) -> [u8; 32] {
-		sp_crypto_hashing::blake2_256(data)
+		sp_core::hashing::blake2_256(data)
 	}
 
 	/// Conduct four XX hashes to give a 256-bit result.
 	fn twox_256(data: &[u8]) -> [u8; 32] {
-		sp_crypto_hashing::twox_256(data)
+		sp_core::hashing::twox_256(data)
 	}
 
 	/// Conduct two XX hashes to give a 128-bit result.
 	fn twox_128(data: &[u8]) -> [u8; 16] {
-		sp_crypto_hashing::twox_128(data)
+		sp_core::hashing::twox_128(data)
 	}
 
 	/// Conduct two XX hashes to give a 64-bit result.
 	fn twox_64(data: &[u8]) -> [u8; 8] {
-		sp_crypto_hashing::twox_64(data)
+		sp_core::hashing::twox_64(data)
 	}
 }
 
@@ -1696,9 +1686,9 @@ mod tracing_setup {
 
 	/// The PassingTracingSubscriber implements `tracing_core::Subscriber`
 	/// and pushes the information across the runtime interface to the host
-	struct PassingTracingSubscriber;
+	struct PassingTracingSubsciber;
 
-	impl tracing_core::Subscriber for PassingTracingSubscriber {
+	impl tracing_core::Subscriber for PassingTracingSubsciber {
 		fn enabled(&self, metadata: &Metadata<'_>) -> bool {
 			wasm_tracing::enabled(Crossing(metadata.into()))
 		}
@@ -1731,7 +1721,7 @@ mod tracing_setup {
 	/// set the global bridging subscriber once.
 	pub fn init_tracing() {
 		if TRACING_SET.load(Ordering::Relaxed) == false {
-			set_global_default(Dispatch::new(PassingTracingSubscriber {}))
+			set_global_default(Dispatch::new(PassingTracingSubsciber {}))
 				.expect("We only ever call this once");
 			TRACING_SET.store(true, Ordering::Relaxed);
 		}
@@ -1747,27 +1737,32 @@ mod tracing_setup {
 
 pub use tracing_setup::init_tracing;
 
-/// Crashes the execution of the program.
-///
-/// Equivalent to the WASM `unreachable` instruction, RISC-V `unimp` instruction,
-/// or just the `unreachable!()` macro everywhere else.
-pub fn unreachable() -> ! {
-	#[cfg(target_family = "wasm")]
-	{
-		core::arch::wasm32::unreachable();
-	}
+/// Allocator used by Substrate when executing the Wasm runtime.
+#[cfg(all(target_arch = "wasm32", not(feature = "std")))]
+struct WasmAllocator;
 
-	#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-	unsafe {
-		core::arch::asm!("unimp", options(noreturn));
-	}
+#[cfg(all(target_arch = "wasm32", not(feature = "disable_allocator"), not(feature = "std")))]
+#[global_allocator]
+static ALLOCATOR: WasmAllocator = WasmAllocator;
 
-	#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_family = "wasm")))]
-	unreachable!();
+#[cfg(all(target_arch = "wasm32", not(feature = "std")))]
+mod allocator_impl {
+	use super::*;
+	use core::alloc::{GlobalAlloc, Layout};
+
+	unsafe impl GlobalAlloc for WasmAllocator {
+		unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+			allocator::malloc(layout.size() as u32)
+		}
+
+		unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
+			allocator::free(ptr)
+		}
+	}
 }
 
-/// A default panic handler for the runtime environment.
-#[cfg(all(not(feature = "disable_panic_handler"), substrate_runtime))]
+/// A default panic handler for WASM environment.
+#[cfg(all(not(feature = "disable_panic_handler"), not(feature = "std")))]
 #[panic_handler]
 #[no_mangle]
 pub fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -1779,11 +1774,11 @@ pub fn panic(info: &core::panic::PanicInfo) -> ! {
 	#[cfg(not(feature = "improved_panic_error_reporting"))]
 	{
 		logging::log(LogLevel::Error, "runtime", message.as_bytes());
-		unreachable();
+		core::arch::wasm32::unreachable();
 	}
 }
 
-/// A default OOM handler for the runtime environment.
+/// A default OOM handler for WASM environment.
 #[cfg(all(not(feature = "disable_oom"), enable_alloc_error_handler))]
 #[alloc_error_handler]
 pub fn oom(_: core::alloc::Layout) -> ! {
@@ -1794,7 +1789,7 @@ pub fn oom(_: core::alloc::Layout) -> ! {
 	#[cfg(not(feature = "improved_panic_error_reporting"))]
 	{
 		logging::log(LogLevel::Error, "runtime", b"Runtime memory exhausted. Aborting");
-		unreachable();
+		core::arch::wasm32::unreachable();
 	}
 }
 

@@ -14,9 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Bridges Common.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Signed extension for the `pallet-bridge-messages` that is able to reject obsolete
-//! (and some other invalid) transactions.
-
 use crate::messages::{
 	source::FromBridgedChainMessagesDeliveryProof, target::FromBridgedChainMessagesProof,
 };
@@ -119,9 +116,7 @@ impl ReceiveMessagesDeliveryProofInfo {
 /// which tries to update a single lane.
 #[derive(PartialEq, RuntimeDebug)]
 pub enum CallInfo {
-	/// Messages delivery call info.
 	ReceiveMessagesProof(ReceiveMessagesProofInfo),
-	/// Messages delivery confirmation call info.
 	ReceiveMessagesDeliveryProof(ReceiveMessagesDeliveryProofInfo),
 }
 
@@ -137,7 +132,7 @@ impl CallInfo {
 
 /// Helper struct that provides methods for working with a call supported by `CallInfo`.
 pub struct CallHelper<T: Config<I>, I: 'static> {
-	_phantom_data: sp_std::marker::PhantomData<(T, I)>,
+	pub _phantom_data: sp_std::marker::PhantomData<(T, I)>,
 }
 
 impl<T: Config<I>, I: 'static> CallHelper<T, I> {

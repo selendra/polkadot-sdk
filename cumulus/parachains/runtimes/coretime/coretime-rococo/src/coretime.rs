@@ -30,8 +30,8 @@ use parachains_common::{AccountId, Balance, BlockNumber};
 use xcm::latest::prelude::*;
 
 pub struct CreditToCollatorPot;
-impl OnUnbalanced<Credit<AccountId, Balances>> for CreditToCollatorPot {
-	fn on_nonzero_unbalanced(credit: Credit<AccountId, Balances>) {
+impl OnUnbalanced<Credit<polkadot_core_primitives::AccountId, Balances>> for CreditToCollatorPot {
+	fn on_nonzero_unbalanced(credit: Credit<polkadot_core_primitives::AccountId, Balances>) {
 		let staking_pot = CollatorSelection::account_id();
 		let _ = <Balances as Balanced<_>>::resolve(&staking_pot, credit);
 	}
@@ -80,7 +80,7 @@ pub struct CoretimeAllocator;
 impl CoretimeInterface for CoretimeAllocator {
 	type AccountId = AccountId;
 	type Balance = Balance;
-	type RelayChainBlockNumberProvider = RelaychainDataProvider<Runtime>;
+	type RealyChainBlockNumberProvider = RelaychainDataProvider<Runtime>;
 
 	fn request_core_count(count: CoreIndex) {
 		use crate::coretime::CoretimeProviderCalls::RequestCoreCount;
@@ -98,7 +98,7 @@ impl CoretimeInterface for CoretimeAllocator {
 			},
 		]);
 
-		match PolkadotXcm::send_xcm(Here, Location::parent(), message.clone()) {
+		match PolkadotXcm::send_xcm(Here, MultiLocation::parent(), message.clone()) {
 			Ok(_) => log::info!(
 				target: "runtime::coretime",
 				"Request to update schedulable cores sent successfully."
@@ -128,7 +128,7 @@ impl CoretimeInterface for CoretimeAllocator {
 			},
 		]);
 
-		match PolkadotXcm::send_xcm(Here, Location::parent(), message.clone()) {
+		match PolkadotXcm::send_xcm(Here, MultiLocation::parent(), message.clone()) {
 			Ok(_) => log::info!(
 				target: "runtime::coretime",
 				"Request for revenue information sent successfully."
@@ -157,7 +157,7 @@ impl CoretimeInterface for CoretimeAllocator {
 			},
 		]);
 
-		match PolkadotXcm::send_xcm(Here, Location::parent(), message.clone()) {
+		match PolkadotXcm::send_xcm(Here, MultiLocation::parent(), message.clone()) {
 			Ok(_) => log::info!(
 				target: "runtime::coretime",
 				"Instruction to credit account sent successfully."
@@ -192,7 +192,7 @@ impl CoretimeInterface for CoretimeAllocator {
 			},
 		]);
 
-		match PolkadotXcm::send_xcm(Here, Location::parent(), message.clone()) {
+		match PolkadotXcm::send_xcm(Here, MultiLocation::parent(), message.clone()) {
 			Ok(_) => log::info!(
 				target: "runtime::coretime",
 				"Core assignment sent successfully."
@@ -232,5 +232,5 @@ impl pallet_broker::Config for Runtime {
 	type WeightInfo = weights::pallet_broker::WeightInfo<Runtime>;
 	type PalletId = BrokerPalletId;
 	type AdminOrigin = EnsureRoot<AccountId>;
-	type PriceAdapter = pallet_broker::CenterTargetPrice<Balance>;
+	type PriceAdapter = pallet_broker::Linear;
 }

@@ -13,19 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::imports::*;
+use crate::*;
 
 #[test]
 fn relay_sets_system_para_xcm_supported_version() {
 	// Init tests variables
 	let sudo_origin = <Westend as Chain>::RuntimeOrigin::root();
-	let system_para_destination: Location = Westend::child_location_of(AssetHubWestend::para_id());
+	let system_para_destination: MultiLocation =
+		Westend::child_location_of(AssetHubWestend::para_id());
 
 	// Relay Chain sets supported version for Asset Parachain
 	Westend::execute_with(|| {
 		assert_ok!(<Westend as WestendPallet>::XcmPallet::force_xcm_version(
 			sudo_origin,
-			bx!(system_para_destination.clone()),
+			bx!(system_para_destination),
 			XCM_V3
 		));
 
@@ -51,7 +52,7 @@ fn system_para_sets_relay_xcm_supported_version() {
 		<AssetHubWestend as Chain>::RuntimeCall::PolkadotXcm(pallet_xcm::Call::<
 			<AssetHubWestend as Chain>::Runtime,
 		>::force_xcm_version {
-			location: bx!(parent_location.clone()),
+			location: bx!(parent_location),
 			version: XCM_V3,
 		})
 		.encode()

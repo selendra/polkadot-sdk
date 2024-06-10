@@ -14,8 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
-
 use fatality::Nested;
 use futures::channel::{mpsc, oneshot};
 
@@ -26,7 +24,7 @@ use polkadot_node_subsystem::{
 use polkadot_node_subsystem_util::{runtime, Error as UtilError};
 use polkadot_primitives::{BackedCandidate, ValidationCodeHash};
 
-use crate::{ParaId, LOG_TARGET};
+use crate::LOG_TARGET;
 
 pub type Result<T> = std::result::Result<T, Error>;
 pub type FatalResult<T> = std::result::Result<T, FatalError>;
@@ -50,14 +48,11 @@ pub enum Error {
 	#[error("Candidate is not found")]
 	CandidateNotFound,
 
-	#[error("CoreIndex cannot be determined for a candidate")]
-	CoreIndexUnavailable,
-
 	#[error("Signature is invalid")]
 	InvalidSignature,
 
 	#[error("Failed to send candidates {0:?}")]
-	Send(HashMap<ParaId, Vec<BackedCandidate>>),
+	Send(Vec<BackedCandidate>),
 
 	#[error("FetchPoV failed")]
 	FetchPoV,
@@ -88,7 +83,7 @@ pub enum Error {
 	JoinMultiple(#[source] oneshot::Canceled),
 
 	#[error("Obtaining erasure chunks failed")]
-	ObtainErasureChunks(#[from] polkadot_erasure_coding::Error),
+	ObtainErasureChunks(#[from] erasure_coding::Error),
 
 	#[error(transparent)]
 	ValidationFailed(#[from] ValidationFailed),

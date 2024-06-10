@@ -14,17 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-#[cfg(all(not(feature = "metadata-hash"), feature = "std"))]
-fn main() {
-	substrate_wasm_builder::WasmBuilder::build_using_defaults();
-}
+use substrate_wasm_builder::WasmBuilder;
 
-#[cfg(all(feature = "metadata-hash", feature = "std"))]
 fn main() {
-	substrate_wasm_builder::WasmBuilder::init_with_defaults()
-		.enable_metadata_hash("WND", 12)
-		.build();
+	WasmBuilder::new()
+		.with_current_project()
+		.import_memory()
+		.export_heap_base()
+		.build()
 }
-
-#[cfg(not(feature = "std"))]
-fn main() {}

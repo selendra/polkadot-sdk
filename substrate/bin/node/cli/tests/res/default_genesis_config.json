@@ -2,13 +2,7 @@
   "system": {},
   "babe": {
     "authorities": [],
-    "epochConfig": {
-        "allowed_slots": "PrimaryAndSecondaryVRFSlots",
-        "c": [
-            1,
-            4
-        ]
-    }
+    "epochConfig": null
   },
   "indices": {
     "indices": []

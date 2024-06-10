@@ -18,7 +18,7 @@
 #![allow(clippy::from_over_into)]
 
 use bp_header_chain::ChainWithGrandpa;
-use bp_runtime::{Chain, ChainId};
+use bp_runtime::Chain;
 use frame_support::{
 	construct_runtime, derive_impl, parameter_types, traits::Hooks, weights::Weight,
 };
@@ -42,22 +42,20 @@ construct_runtime! {
 	}
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for TestRuntime {
 	type Block = Block;
 }
 
 parameter_types! {
-	pub const MaxFreeHeadersPerBlock: u32 = 2;
-	pub const FreeHeadersInterval: u32 = 32;
+	pub const MaxFreeMandatoryHeadersPerBlock: u32 = 2;
 	pub const HeadersToKeep: u32 = 5;
 }
 
 impl grandpa::Config for TestRuntime {
 	type RuntimeEvent = RuntimeEvent;
 	type BridgedChain = TestBridgedChain;
-	type MaxFreeHeadersPerBlock = MaxFreeHeadersPerBlock;
-	type FreeHeadersInterval = FreeHeadersInterval;
+	type MaxFreeMandatoryHeadersPerBlock = MaxFreeMandatoryHeadersPerBlock;
 	type HeadersToKeep = HeadersToKeep;
 	type WeightInfo = ();
 }
@@ -66,9 +64,7 @@ impl grandpa::Config for TestRuntime {
 pub struct TestBridgedChain;
 
 impl Chain for TestBridgedChain {
-	const ID: ChainId = *b"tbch";
-
-	type BlockNumber = frame_system::pallet_prelude::BlockNumberFor<TestRuntime>;
+	type BlockNumber = TestNumber;
 	type Hash = <TestRuntime as frame_system::Config>::Hash;
 	type Hasher = <TestRuntime as frame_system::Config>::Hashing;
 	type Header = TestHeader;
@@ -89,7 +85,7 @@ impl Chain for TestBridgedChain {
 impl ChainWithGrandpa for TestBridgedChain {
 	const WITH_CHAIN_GRANDPA_PALLET_NAME: &'static str = "";
 	const MAX_AUTHORITIES_COUNT: u32 = MAX_BRIDGED_AUTHORITIES;
-	const REASONABLE_HEADERS_IN_JUSTIFICATION_ANCESTRY: u32 = 8;
+	const REASONABLE_HEADERS_IN_JUSTIFICATON_ANCESTRY: u32 = 8;
 	const MAX_MANDATORY_HEADER_SIZE: u32 = 256;
 	const AVERAGE_HEADER_SIZE: u32 = 64;
 }

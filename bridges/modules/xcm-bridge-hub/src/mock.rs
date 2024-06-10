@@ -19,10 +19,11 @@
 use crate as pallet_xcm_bridge_hub;
 
 use bp_messages::{
+	source_chain::LaneMessageVerifier,
 	target_chain::{DispatchMessage, MessageDispatch},
-	LaneId,
+	LaneId, OutboundLaneData, VerificationError,
 };
-use bp_runtime::{messages::MessageDispatchResult, Chain, ChainId, UnderlyingChainProvider};
+use bp_runtime::{messages::MessageDispatchResult, Chain, UnderlyingChainProvider};
 use bridge_runtime_common::{
 	messages::{
 		source::TargetHeaderChainAdapter, target::SourceHeaderChainAdapter,
@@ -64,7 +65,7 @@ parameter_types! {
 	pub const ExistentialDeposit: Balance = 1;
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for TestRuntime {
 	type AccountId = AccountId;
 	type AccountData = pallet_balances::AccountData<Balance>;
@@ -72,9 +73,23 @@ impl frame_system::Config for TestRuntime {
 	type Lookup = IdentityLookup<Self::AccountId>;
 }
 
-#[derive_impl(pallet_balances::config_preludes::TestDefaultConfig)]
+#[derive_impl(pallet_balances::config_preludes::TestDefaultConfig as pallet_balances::DefaultConfig)]
 impl pallet_balances::Config for TestRuntime {
 	type AccountStore = System;
+}
+
+/// Lane message verifier that is used in tests.
+#[derive(Debug, Default)]
+pub struct TestLaneMessageVerifier;
+
+impl LaneMessageVerifier<Vec<u8>> for TestLaneMessageVerifier {
+	fn verify_message(
+		_lane: &LaneId,
+		_lane_outbound_data: &OutboundLaneData,
+		_payload: &Vec<u8>,
+	) -> Result<(), VerificationError> {
+		Ok(())
+	}
 }
 
 parameter_types! {
@@ -95,6 +110,7 @@ impl pallet_bridge_messages::Config for TestRuntime {
 	type InboundRelayer = ();
 	type DeliveryPayments = ();
 	type TargetHeaderChain = TargetHeaderChainAdapter<OnThisChainBridge>;
+	type LaneMessageVerifier = TestLaneMessageVerifier;
 	type DeliveryConfirmationPayments = ();
 	type OnMessagesDelivered = ();
 	type SourceHeaderChain = SourceHeaderChainAdapter<OnThisChainBridge>;
@@ -154,13 +170,16 @@ impl pallet_bridge_messages::WeightInfoExt for TestMessagesWeights {
 parameter_types! {
 	pub const RelayNetwork: NetworkId = NetworkId::Kusama;
 	pub const BridgedRelayNetwork: NetworkId = NetworkId::Polkadot;
-	pub BridgedRelayNetworkLocation: Location = (Parent, GlobalConsensus(BridgedRelayNetwork::get())).into();
+	pub const BridgedRelayNetworkLocation: MultiLocation = MultiLocation {
+		parents: 1,
+		interior: X1(GlobalConsensus(BridgedRelayNetwork::get()))
+	};
 	pub const NonBridgedRelayNetwork: NetworkId = NetworkId::Rococo;
 	pub const BridgeReserve: Balance = 100_000;
-	pub UniversalLocation: InteriorLocation = [
+	pub UniversalLocation: InteriorMultiLocation = X2(
 		GlobalConsensus(RelayNetwork::get()),
 		Parachain(THIS_BRIDGE_HUB_ID),
-	].into();
+	);
 	pub const Penalty: Balance = 1_000;
 }
 
@@ -178,13 +197,13 @@ impl pallet_xcm_bridge_hub::Config for TestRuntime {
 
 parameter_types! {
 	pub TestSenderAndLane: SenderAndLane = SenderAndLane {
-		location: Location::new(1, [Parachain(SIBLING_ASSET_HUB_ID)]),
+		location: MultiLocation::new(1, X1(Parachain(SIBLING_ASSET_HUB_ID))),
 		lane: TEST_LANE_ID,
 	};
-	pub BridgedDestination: InteriorLocation = [
+	pub const BridgedDestination: InteriorMultiLocation = X1(
 		Parachain(BRIDGED_ASSET_HUB_ID)
-	].into();
-	pub TestLanes: sp_std::vec::Vec<(SenderAndLane, (NetworkId, InteriorLocation))> = sp_std::vec![
+	);
+	pub TestLanes: sp_std::vec::Vec<(SenderAndLane, (NetworkId, InteriorMultiLocation))> = sp_std::vec![
 		(TestSenderAndLane::get(), (BridgedRelayNetwork::get(), BridgedDestination::get()))
 	];
 }
@@ -201,7 +220,6 @@ impl XcmBlobHauler for TestXcmBlobHauler {
 pub struct ThisChain;
 
 impl Chain for ThisChain {
-	const ID: ChainId = *b"tuch";
 	type BlockNumber = u64;
 	type Hash = H256;
 	type Hasher = BlakeTwo256;
@@ -225,7 +243,6 @@ pub type BridgedHeaderHash = H256;
 pub type BridgedChainHeader = SubstrateHeader;
 
 impl Chain for BridgedChain {
-	const ID: ChainId = *b"tuch";
 	type BlockNumber = u64;
 	type Hash = BridgedHeaderHash;
 	type Hasher = BlakeTwo256;

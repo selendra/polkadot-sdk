@@ -18,20 +18,19 @@
 
 //! Substrate offchain API.
 
-pub mod error;
-
-use error::Error;
-use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use sp_core::{offchain::StorageKind, Bytes};
+
+pub mod error;
 
 /// Substrate offchain RPC API
 #[rpc(client, server)]
 pub trait OffchainApi {
 	/// Set offchain local storage under given key and prefix.
 	#[method(name = "offchain_localStorageSet")]
-	fn set_local_storage(&self, kind: StorageKind, key: Bytes, value: Bytes) -> Result<(), Error>;
+	fn set_local_storage(&self, kind: StorageKind, key: Bytes, value: Bytes) -> RpcResult<()>;
 
 	/// Get offchain local storage under given key and prefix.
 	#[method(name = "offchain_localStorageGet")]
-	fn get_local_storage(&self, kind: StorageKind, key: Bytes) -> Result<Option<Bytes>, Error>;
+	fn get_local_storage(&self, kind: StorageKind, key: Bytes) -> RpcResult<Option<Bytes>>;
 }

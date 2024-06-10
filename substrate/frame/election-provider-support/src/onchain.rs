@@ -194,12 +194,13 @@ mod tests {
 	pub type Block = sp_runtime::generic::Block<Header, UncheckedExtrinsic>;
 
 	frame_support::construct_runtime!(
-		pub enum Runtime {
-			System: frame_system,
+		pub struct Runtime
+		{
+			System: frame_system::{Pallet, Call, Event<T>},
 		}
 	);
 
-	#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+	#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 	impl frame_system::Config for Runtime {
 		type SS58Prefix = ();
 		type BaseCallFilter = frame_support::traits::Everything;

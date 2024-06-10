@@ -305,7 +305,6 @@ async fn participate(
 			req.candidate_receipt().clone(),
 			req.session(),
 			None,
-			None,
 			recover_available_data_tx,
 		))
 		.await;

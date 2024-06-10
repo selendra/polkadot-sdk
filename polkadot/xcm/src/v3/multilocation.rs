@@ -17,11 +17,12 @@
 //! XCM `MultiLocation` datatype.
 
 use super::{Junction, Junctions};
-use crate::{
-	v2::MultiLocation as OldMultiLocation, v4::Location as NewMultiLocation, VersionedLocation,
+use crate::{v2::MultiLocation as OldMultiLocation, VersionedMultiLocation};
+use core::{
+	convert::{TryFrom, TryInto},
+	result,
 };
-use codec::{Decode, Encode, MaxEncodedLen};
-use core::result;
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 /// A relative path between state-bearing consensus systems.
@@ -73,9 +74,6 @@ pub struct MultiLocation {
 	pub interior: Junctions,
 }
 
-/// Type alias for a better transition to V4.
-pub type Location = MultiLocation;
-
 impl Default for MultiLocation {
 	fn default() -> Self {
 		Self { parents: 0, interior: Junctions::Here }
@@ -93,9 +91,9 @@ impl MultiLocation {
 		MultiLocation { parents, interior: interior.into() }
 	}
 
-	/// Consume `self` and return the equivalent `VersionedLocation` value.
-	pub const fn into_versioned(self) -> VersionedLocation {
-		VersionedLocation::V3(self)
+	/// Consume `self` and return the equivalent `VersionedMultiLocation` value.
+	pub const fn into_versioned(self) -> VersionedMultiLocation {
+		VersionedMultiLocation::V3(self)
 	}
 
 	/// Creates a new `MultiLocation` with 0 parents and a `Here` interior.
@@ -202,7 +200,7 @@ impl MultiLocation {
 	}
 
 	/// Consumes `self` and returns a `MultiLocation` suffixed with `new`, or an `Err` with
-	/// the original value of `self` in case of overflow.
+	/// theoriginal value of `self` in case of overflow.
 	pub fn pushed_with_interior(
 		self,
 		new: impl Into<Junction>,
@@ -471,23 +469,6 @@ impl TryFrom<OldMultiLocation> for MultiLocation {
 	}
 }
 
-impl TryFrom<NewMultiLocation> for Option<MultiLocation> {
-	type Error = ();
-	fn try_from(new: NewMultiLocation) -> result::Result<Self, Self::Error> {
-		Ok(Some(MultiLocation::try_from(new)?))
-	}
-}
-
-impl TryFrom<NewMultiLocation> for MultiLocation {
-	type Error = ();
-	fn try_from(new: NewMultiLocation) -> result::Result<Self, ()> {
-		Ok(MultiLocation {
-			parents: new.parent_count(),
-			interior: new.interior().clone().try_into()?,
-		})
-	}
-}
-
 /// A unit struct which can be converted into a `MultiLocation` of `parents` value 1.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Parent;
@@ -531,7 +512,7 @@ xcm_procedural::impl_conversion_functions_for_multilocation_v3!();
 #[cfg(test)]
 mod tests {
 	use crate::v3::prelude::*;
-	use codec::{Decode, Encode};
+	use parity_scale_codec::{Decode, Encode};
 
 	#[test]
 	fn conversion_works() {
@@ -763,6 +744,7 @@ mod tests {
 	#[test]
 	fn conversion_from_other_types_works() {
 		use crate::v2;
+		use core::convert::TryInto;
 
 		fn takes_multilocation<Arg: Into<MultiLocation>>(_arg: Arg) {}
 

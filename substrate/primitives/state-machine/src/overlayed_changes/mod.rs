@@ -22,7 +22,6 @@ mod offchain;
 
 use self::changeset::OverlayedChangeSet;
 use crate::{backend::Backend, stats::StateMachineStats, BackendTransaction, DefaultError};
-use alloc::{collections::btree_set::BTreeSet, vec::Vec};
 use codec::{Decode, Encode};
 use hash_db::Hasher;
 pub use offchain::OffchainOverlayedChanges;
@@ -32,13 +31,12 @@ use sp_core::{
 };
 #[cfg(feature = "std")]
 use sp_externalities::{Extension, Extensions};
-use sp_trie::{empty_child_trie_root, LayoutV1};
-
 #[cfg(not(feature = "std"))]
-use alloc::collections::btree_map::BTreeMap as Map;
+use sp_std::collections::btree_map::BTreeMap as Map;
+use sp_std::{collections::btree_set::BTreeSet, vec::Vec};
+use sp_trie::{empty_child_trie_root, LayoutV1};
 #[cfg(feature = "std")]
 use std::collections::{hash_map::Entry as MapEntry, HashMap as Map};
-
 #[cfg(feature = "std")]
 use std::{
 	any::{Any, TypeId},
@@ -138,7 +136,7 @@ impl<H: Hasher> Clone for OverlayedChanges<H> {
 	}
 }
 
-impl<H: Hasher> core::fmt::Debug for OverlayedChanges<H> {
+impl<H: Hasher> sp_std::fmt::Debug for OverlayedChanges<H> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("OverlayedChanges")
 			.field("top", &self.top)
@@ -261,7 +259,7 @@ impl<H: Hasher> Clone for StorageTransactionCache<H> {
 	}
 }
 
-impl<H: Hasher> core::fmt::Debug for StorageTransactionCache<H> {
+impl<H: Hasher> sp_std::fmt::Debug for StorageTransactionCache<H> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		let mut debug = f.debug_struct("StorageTransactionCache");
 
@@ -480,7 +478,7 @@ impl<H: Hasher> OverlayedChanges<H> {
 		Ok(())
 	}
 
-	/// Call this before transferring control to the runtime.
+	/// Call this before transfering control to the runtime.
 	///
 	/// This protects all existing transactions from being removed by the runtime.
 	/// Calling this while already inside the runtime will return an error.
@@ -574,11 +572,11 @@ impl<H: Hasher> OverlayedChanges<H> {
 			},
 		};
 
-		use core::mem::take;
-		let main_storage_changes = take(&mut self.top).drain_committed();
+		use sp_std::mem::take;
+		let main_storage_changes = take(&mut self.top).drain_commited();
 		let child_storage_changes = take(&mut self.children)
 			.into_iter()
-			.map(|(key, (val, info))| (key, (val.drain_committed(), info)));
+			.map(|(key, (val, info))| (key, (val.drain_commited(), info)));
 
 		let offchain_storage_changes = self.offchain_drain_committed().collect();
 
@@ -779,7 +777,7 @@ where
 	K: Ord,
 	F: FnMut(&K, &mut V) -> bool,
 {
-	let old = core::mem::replace(map, Map::default());
+	let old = sp_std::mem::replace(map, Map::default());
 	for (k, mut v) in old.into_iter() {
 		if f(&k, &mut v) {
 			map.insert(k, v);
@@ -809,7 +807,7 @@ pub struct OverlayedExtensions<'a> {
 
 #[cfg(feature = "std")]
 impl<'a> OverlayedExtensions<'a> {
-	/// Create a new instance of overlaid extensions from the given extensions.
+	/// Create a new instance of overalyed extensions from the given extensions.
 	pub fn new(extensions: &'a mut Extensions) -> Self {
 		Self {
 			extensions: extensions

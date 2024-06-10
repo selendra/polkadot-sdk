@@ -27,7 +27,7 @@ pub type Header = sp_runtime::generic::Header<u32, sp_runtime::traits::BlakeTwo2
 pub type Block = sp_runtime::generic::Block<Header, UncheckedExtrinsic>;
 pub type UncheckedExtrinsic = sp_runtime::generic::UncheckedExtrinsic<u32, RuntimeCall, (), ()>;
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
 	type BlockWeights = ();
 	type BlockLength = ();
@@ -42,6 +42,7 @@ impl frame_system::Config for Runtime {
 	type Lookup = sp_runtime::traits::IdentityLookup<Self::AccountId>;
 	type Block = Block;
 	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU32<250>;
 	type Version = ();
 	type PalletInfo = PalletInfo;
 	type AccountData = ();
@@ -100,7 +101,7 @@ sp_api::impl_runtime_apis! {
 		fn execute_block(_: Block) {
 			unimplemented!()
 		}
-		fn initialize_block(_: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
+		fn initialize_block(_: &<Block as BlockT>::Header) {
 			unimplemented!()
 		}
 	}
@@ -199,8 +200,8 @@ fn runtime_metadata() {
 						name: "header",
 						ty: meta_type::<&<Block as BlockT>::Header>(),
 					}],
-					output: meta_type::<sp_runtime::ExtrinsicInclusionMode>(),
-					docs: maybe_docs(vec![" Initialize a block with the given header and return the runtime executive mode."]),
+					output: meta_type::<()>(),
+					docs: maybe_docs(vec![" Initialize a block with the given header."]),
 				},
 			],
 			docs: maybe_docs(vec![

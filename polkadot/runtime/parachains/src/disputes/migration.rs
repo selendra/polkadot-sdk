@@ -24,7 +24,7 @@ pub mod v1 {
 	use frame_support::{
 		pallet_prelude::*, storage_alias, traits::OnRuntimeUpgrade, weights::Weight,
 	};
-	use polkadot_primitives::SessionIndex;
+	use primitives::SessionIndex;
 	use sp_std::prelude::*;
 
 	#[storage_alias]

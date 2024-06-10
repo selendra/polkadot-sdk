@@ -136,15 +136,6 @@ impl RelayChainInterface for Relaychain {
 		Ok(Some(PersistedValidationData { parent_head, ..Default::default() }))
 	}
 
-	async fn validation_code_hash(
-		&self,
-		_: PHash,
-		_: ParaId,
-		_: OccupiedCoreAssumption,
-	) -> RelayChainResult<Option<ValidationCodeHash>> {
-		unimplemented!("Not needed for test")
-	}
-
 	async fn candidate_pending_availability(
 		&self,
 		_: PHash,
@@ -274,7 +265,7 @@ fn build_block<B: InitBlockBuilder>(
 	timestamp: Option<u64>,
 	relay_parent: Option<PHash>,
 ) -> Block {
-	let cumulus_test_client::BlockBuilderAndSupportData { block_builder, .. } = match at {
+	let builder = match at {
 		Some(at) => match timestamp {
 			Some(ts) => builder.init_block_builder_with_timestamp(at, None, sproof, ts),
 			None => builder.init_block_builder_at(at, None, sproof),
@@ -282,7 +273,7 @@ fn build_block<B: InitBlockBuilder>(
 		None => builder.init_block_builder(None, sproof),
 	};
 
-	let mut block = block_builder.build().unwrap().block;
+	let mut block = builder.build().unwrap().block;
 
 	if let Some(relay_parent) = relay_parent {
 		block
@@ -503,7 +494,7 @@ fn follow_finalized_does_not_stop_on_unknown_block() {
 
 	let unknown_block = {
 		let sproof = sproof_with_parent_by_hash(&client, block.hash());
-		let block_builder = client.init_block_builder_at(block.hash(), None, sproof).block_builder;
+		let block_builder = client.init_block_builder_at(block.hash(), None, sproof);
 		block_builder.build().unwrap().block
 	};
 
@@ -553,7 +544,7 @@ fn follow_new_best_sets_best_after_it_is_imported() {
 
 	let unknown_block = {
 		let sproof = sproof_with_parent_by_hash(&client, block.hash());
-		let block_builder = client.init_block_builder_at(block.hash(), None, sproof).block_builder;
+		let block_builder = client.init_block_builder_at(block.hash(), None, sproof);
 		block_builder.build().unwrap().block
 	};
 
@@ -665,8 +656,8 @@ fn do_not_set_best_block_to_older_block() {
 fn prune_blocks_on_level_overflow() {
 	// Here we are using the timestamp value to generate blocks with different hashes.
 	const LEVEL_LIMIT: usize = 3;
+	const TIMESTAMP_MULTIPLIER: u64 = 60000;
 
-	let mut ts_producer = std::iter::successors(Some(0), |&x| Some(x + 6000));
 	let backend = Arc::new(Backend::new_test(1000, 3));
 	let client = Arc::new(TestClientBuilder::with_backend(backend.clone()).build());
 	let mut para_import = ParachainBlockImport::new_with_limit(
@@ -675,14 +666,13 @@ fn prune_blocks_on_level_overflow() {
 		LevelLimit::Some(LEVEL_LIMIT),
 	);
 
-	let best_hash = client.chain_info().best_hash;
 	let block0 = build_and_import_block_ext(
 		&client,
 		BlockOrigin::NetworkInitialSync,
 		true,
 		&mut para_import,
-		Some(best_hash),
-		ts_producer.next(),
+		None,
+		None,
 		None,
 	);
 	let id0 = block0.header.hash();
@@ -695,7 +685,7 @@ fn prune_blocks_on_level_overflow() {
 				i == 1,
 				&mut para_import,
 				Some(id0),
-				ts_producer.next(),
+				Some(i as u64 * TIMESTAMP_MULTIPLIER),
 				None,
 			)
 		})
@@ -703,14 +693,14 @@ fn prune_blocks_on_level_overflow() {
 	let id10 = blocks1[0].header.hash();
 
 	let blocks2 = (0..2)
-		.map(|_| {
+		.map(|i| {
 			build_and_import_block_ext(
 				&client,
 				BlockOrigin::Own,
 				false,
 				&mut para_import,
 				Some(id10),
-				ts_producer.next(),
+				Some(i as u64 * TIMESTAMP_MULTIPLIER),
 				None,
 			)
 		})
@@ -739,7 +729,7 @@ fn prune_blocks_on_level_overflow() {
 		false,
 		&mut para_import,
 		Some(id0),
-		ts_producer.next(),
+		Some(LEVEL_LIMIT as u64 * TIMESTAMP_MULTIPLIER),
 		None,
 	);
 
@@ -759,7 +749,7 @@ fn prune_blocks_on_level_overflow() {
 		false,
 		&mut para_import,
 		Some(id0),
-		ts_producer.next(),
+		Some(2 * LEVEL_LIMIT as u64 * TIMESTAMP_MULTIPLIER),
 		None,
 	);
 
@@ -780,8 +770,8 @@ fn prune_blocks_on_level_overflow() {
 fn restore_limit_monitor() {
 	// Here we are using the timestamp value to generate blocks with different hashes.
 	const LEVEL_LIMIT: usize = 2;
-	// Iterator that produces a new timestamp in the next slot
-	let mut ts_producer = std::iter::successors(Some(0), |&x| Some(x + 6000));
+	const TIMESTAMP_MULTIPLIER: u64 = 60000;
+
 	let backend = Arc::new(Backend::new_test(1000, 3));
 	let client = Arc::new(TestClientBuilder::with_backend(backend.clone()).build());
 
@@ -792,14 +782,13 @@ fn restore_limit_monitor() {
 		LevelLimit::Some(usize::MAX),
 	);
 
-	let best_hash = client.chain_info().best_hash;
 	let block00 = build_and_import_block_ext(
 		&client,
 		BlockOrigin::NetworkInitialSync,
 		true,
 		&mut para_import,
-		Some(best_hash),
-		ts_producer.next(),
+		None,
+		None,
 		None,
 	);
 	let id00 = block00.header.hash();
@@ -812,27 +801,29 @@ fn restore_limit_monitor() {
 				i == 1,
 				&mut para_import,
 				Some(id00),
-				ts_producer.next(),
+				Some(i as u64 * TIMESTAMP_MULTIPLIER),
 				None,
 			)
 		})
 		.collect::<Vec<_>>();
 	let id10 = blocks1[0].header.hash();
 
-	for _ in 0..LEVEL_LIMIT {
-		build_and_import_block_ext(
-			&client,
-			BlockOrigin::Own,
-			false,
-			&mut para_import,
-			Some(id10),
-			ts_producer.next(),
-			None,
-		);
-	}
+	let _ = (0..LEVEL_LIMIT)
+		.map(|i| {
+			build_and_import_block_ext(
+				&client,
+				BlockOrigin::Own,
+				false,
+				&mut para_import,
+				Some(id10),
+				Some(i as u64 * TIMESTAMP_MULTIPLIER),
+				None,
+			)
+		})
+		.collect::<Vec<_>>();
 
 	// Scenario before limit application (with B11 imported as best)
-	// Import order (freshness): B00, B10, B11, B12, B20, B21
+	// Import order (freshess): B00, B10, B11, B12, B20, B21
 	//
 	//   B00 --+-- B10 --+-- B20
 	//         |         +-- B21
@@ -860,7 +851,7 @@ fn restore_limit_monitor() {
 		false,
 		&mut para_import,
 		Some(id00),
-		ts_producer.next(),
+		Some(LEVEL_LIMIT as u64 * TIMESTAMP_MULTIPLIER),
 		None,
 	);
 

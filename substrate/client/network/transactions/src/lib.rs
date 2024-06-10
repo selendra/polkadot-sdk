@@ -30,24 +30,20 @@ use crate::config::*;
 
 use codec::{Decode, Encode};
 use futures::{prelude::*, stream::FuturesUnordered};
+use libp2p::{multiaddr, PeerId};
 use log::{debug, trace, warn};
 
 use prometheus_endpoint::{register, Counter, PrometheusError, Registry, U64};
 use sc_network::{
-	config::{NonReservedPeerMode, ProtocolId, SetConfig},
-	error, multiaddr,
-	peer_store::PeerStoreProvider,
-	service::{
-		traits::{NotificationEvent, NotificationService, ValidationResult},
-		NotificationMetrics,
-	},
+	config::{NonDefaultSetConfig, NonReservedPeerMode, ProtocolId, SetConfig},
+	error,
+	service::traits::{NotificationEvent, NotificationService, ValidationResult},
 	types::ProtocolName,
 	utils::{interval, LruHashSet},
-	NetworkBackend, NetworkEventStream, NetworkPeers,
+	NetworkEventStream, NetworkNotification, NetworkPeers,
 };
 use sc_network_common::{role::ObservedRole, ExHashT};
 use sc_network_sync::{SyncEvent, SyncEventStream};
-use sc_network_types::PeerId;
 use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_runtime::traits::Block as BlockT;
 
@@ -64,9 +60,6 @@ pub mod config;
 
 /// A set of transactions.
 pub type Transactions<E> = Vec<E>;
-
-/// Logging target for the file.
-const LOG_TARGET: &str = "sync";
 
 mod rep {
 	use sc_network::ReputationChange as Rep;
@@ -131,17 +124,11 @@ pub struct TransactionsHandlerPrototype {
 
 impl TransactionsHandlerPrototype {
 	/// Create a new instance.
-	pub fn new<
-		Hash: AsRef<[u8]>,
-		Block: BlockT,
-		Net: NetworkBackend<Block, <Block as BlockT>::Hash>,
-	>(
+	pub fn new<Hash: AsRef<[u8]>>(
 		protocol_id: ProtocolId,
 		genesis_hash: Hash,
 		fork_id: Option<&str>,
-		metrics: NotificationMetrics,
-		peer_store_handle: Arc<dyn PeerStoreProvider>,
-	) -> (Self, Net::NotificationProtocolConfig) {
+	) -> (Self, NonDefaultSetConfig) {
 		let genesis_hash = genesis_hash.as_ref();
 		let protocol_name: ProtocolName = if let Some(fork_id) = fork_id {
 			format!("/{}/{}/transactions/1", array_bytes::bytes2hex("", genesis_hash), fork_id)
@@ -149,7 +136,7 @@ impl TransactionsHandlerPrototype {
 			format!("/{}/transactions/1", array_bytes::bytes2hex("", genesis_hash))
 		}
 		.into();
-		let (config, notification_service) = Net::notification_config(
+		let (config, notification_service) = NonDefaultSetConfig::new(
 			protocol_name.clone(),
 			vec![format!("/{}/transactions/1", protocol_id.as_ref()).into()],
 			MAX_TRANSACTIONS_SIZE,
@@ -160,8 +147,6 @@ impl TransactionsHandlerPrototype {
 				reserved_nodes: Vec::new(),
 				non_reserved_mode: NonReservedPeerMode::Deny,
 			},
-			metrics,
-			peer_store_handle,
 		);
 
 		(Self { protocol_name, notification_service }, config)
@@ -175,7 +160,7 @@ impl TransactionsHandlerPrototype {
 	pub fn build<
 		B: BlockT + 'static,
 		H: ExHashT,
-		N: NetworkPeers + NetworkEventStream,
+		N: NetworkPeers + NetworkEventStream + NetworkNotification,
 		S: SyncEventStream + sp_consensus::SyncOracle,
 	>(
 		self,
@@ -246,7 +231,7 @@ enum ToHandler<H: ExHashT> {
 pub struct TransactionsHandler<
 	B: BlockT + 'static,
 	H: ExHashT,
-	N: NetworkPeers + NetworkEventStream,
+	N: NetworkPeers + NetworkEventStream + NetworkNotification,
 	S: SyncEventStream + sp_consensus::SyncOracle,
 > {
 	protocol_name: ProtocolName,
@@ -287,7 +272,7 @@ impl<B, H, N, S> TransactionsHandler<B, H, N, S>
 where
 	B: BlockT + 'static,
 	H: ExHashT,
-	N: NetworkPeers + NetworkEventStream,
+	N: NetworkPeers + NetworkEventStream + NetworkNotification,
 	S: SyncEventStream + sp_consensus::SyncOracle,
 {
 	/// Turns the [`TransactionsHandler`] into a future that should run forever and not be
@@ -384,7 +369,7 @@ where
 					iter::once(addr).collect(),
 				);
 				if let Err(err) = result {
-					log::error!(target: LOG_TARGET, "Add reserved peer failed: {}", err);
+					log::error!(target: "sync", "Add reserved peer failed: {}", err);
 				}
 			},
 			SyncEvent::PeerDisconnected(remote) => {
@@ -393,7 +378,7 @@ where
 					iter::once(remote).collect(),
 				);
 				if let Err(err) = result {
-					log::error!(target: LOG_TARGET, "Remove reserved peer failed: {}", err);
+					log::error!(target: "sync", "Remove reserved peer failed: {}", err);
 				}
 			},
 		}
@@ -403,16 +388,16 @@ where
 	fn on_transactions(&mut self, who: PeerId, transactions: Transactions<B::Extrinsic>) {
 		// Accept transactions only when node is not major syncing
 		if self.sync.is_major_syncing() {
-			trace!(target: LOG_TARGET, "{} Ignoring transactions while major syncing", who);
+			trace!(target: "sync", "{} Ignoring transactions while major syncing", who);
 			return
 		}
 
-		trace!(target: LOG_TARGET, "Received {} transactions from {}", transactions.len(), who);
+		trace!(target: "sync", "Received {} transactions from {}", transactions.len(), who);
 		if let Some(ref mut peer) = self.peers.get_mut(&who) {
 			for t in transactions {
 				if self.pending_transactions.len() > MAX_PENDING_TRANSACTIONS {
 					debug!(
-						target: LOG_TARGET,
+						target: "sync",
 						"Ignoring any further transactions that exceed `MAX_PENDING_TRANSACTIONS`({}) limit",
 						MAX_PENDING_TRANSACTIONS,
 					);
@@ -457,7 +442,7 @@ where
 			return
 		}
 
-		debug!(target: LOG_TARGET, "Propagating transaction [{:?}]", hash);
+		debug!(target: "sync", "Propagating transaction [{:?}]", hash);
 		if let Some(transaction) = self.transaction_pool.transaction(hash) {
 			let propagated_to = self.do_propagate_transactions(&[(hash.clone(), transaction)]);
 			self.transaction_pool.on_broadcasted(propagated_to);
@@ -521,7 +506,7 @@ where
 			return
 		}
 
-		debug!(target: LOG_TARGET, "Propagating transactions");
+		debug!(target: "sync", "Propagating transactions");
 		let transactions = self.transaction_pool.transactions();
 		let propagated_to = self.do_propagate_transactions(&transactions);
 		self.transaction_pool.on_broadcasted(propagated_to);

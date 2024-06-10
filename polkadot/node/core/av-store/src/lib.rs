@@ -26,7 +26,6 @@ use std::{
 	time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use codec::{Decode, Encode, Error as CodecError, Input};
 use futures::{
 	channel::{
 		mpsc::{channel, Receiver as MpscReceiver, Sender as MpscSender},
@@ -35,6 +34,7 @@ use futures::{
 	future, select, FutureExt, SinkExt, StreamExt,
 };
 use futures_timer::Delay;
+use parity_scale_codec::{Decode, Encode, Error as CodecError, Input};
 use polkadot_node_subsystem_util::database::{DBTransaction, Database};
 use sp_consensus::SyncOracle;
 
@@ -48,10 +48,8 @@ use polkadot_node_subsystem::{
 };
 use polkadot_node_subsystem_util as util;
 use polkadot_primitives::{
-	BlockNumber, CandidateEvent, CandidateHash, CandidateReceipt, ChunkIndex, CoreIndex, Hash,
-	Header, NodeFeatures, ValidatorIndex,
+	BlockNumber, CandidateEvent, CandidateHash, CandidateReceipt, Hash, Header, ValidatorIndex,
 };
-use util::availability_chunks::availability_chunk_indices;
 
 mod metrics;
 pub use self::metrics::*;
@@ -210,9 +208,9 @@ fn load_chunk(
 	db: &Arc<dyn Database>,
 	config: &Config,
 	candidate_hash: &CandidateHash,
-	validator_index: ValidatorIndex,
+	chunk_index: ValidatorIndex,
 ) -> Result<Option<ErasureChunk>, Error> {
-	let key = (CHUNK_PREFIX, candidate_hash, validator_index).encode();
+	let key = (CHUNK_PREFIX, candidate_hash, chunk_index).encode();
 
 	query_inner(db, config.col_data, &key)
 }
@@ -221,10 +219,10 @@ fn write_chunk(
 	tx: &mut DBTransaction,
 	config: &Config,
 	candidate_hash: &CandidateHash,
-	validator_index: ValidatorIndex,
+	chunk_index: ValidatorIndex,
 	erasure_chunk: &ErasureChunk,
 ) {
-	let key = (CHUNK_PREFIX, candidate_hash, validator_index).encode();
+	let key = (CHUNK_PREFIX, candidate_hash, chunk_index).encode();
 
 	tx.put_vec(config.col_data, &key, erasure_chunk.encode());
 }
@@ -233,9 +231,9 @@ fn delete_chunk(
 	tx: &mut DBTransaction,
 	config: &Config,
 	candidate_hash: &CandidateHash,
-	validator_index: ValidatorIndex,
+	chunk_index: ValidatorIndex,
 ) {
-	let key = (CHUNK_PREFIX, candidate_hash, validator_index).encode();
+	let key = (CHUNK_PREFIX, candidate_hash, chunk_index).encode();
 
 	tx.delete(config.col_data, &key[..]);
 }
@@ -354,7 +352,7 @@ pub enum Error {
 	ChainApi(#[from] ChainApiError),
 
 	#[error(transparent)]
-	Erasure(#[from] polkadot_erasure_coding::Error),
+	Erasure(#[from] erasure::Error),
 
 	#[error(transparent)]
 	Io(#[from] io::Error),
@@ -1141,23 +1139,20 @@ fn process_message(
 				Some(meta) => {
 					let mut chunks = Vec::new();
 
-					for (validator_index, _) in
-						meta.chunks_stored.iter().enumerate().filter(|(_, b)| **b)
-					{
-						let validator_index = ValidatorIndex(validator_index as _);
+					for (index, _) in meta.chunks_stored.iter().enumerate().filter(|(_, b)| **b) {
 						let _timer = subsystem.metrics.time_get_chunk();
 						match load_chunk(
 							&subsystem.db,
 							&subsystem.config,
 							&candidate,
-							validator_index,
+							ValidatorIndex(index as _),
 						)? {
-							Some(c) => chunks.push((validator_index, c)),
+							Some(c) => chunks.push(c),
 							None => {
 								gum::warn!(
 									target: LOG_TARGET,
 									?candidate,
-									?validator_index,
+									index,
 									"No chunk found for set bit in meta"
 								);
 							},
@@ -1174,17 +1169,11 @@ fn process_message(
 			});
 			let _ = tx.send(a);
 		},
-		AvailabilityStoreMessage::StoreChunk { candidate_hash, validator_index, chunk, tx } => {
+		AvailabilityStoreMessage::StoreChunk { candidate_hash, chunk, tx } => {
 			subsystem.metrics.on_chunks_received(1);
 			let _timer = subsystem.metrics.time_store_chunk();
 
-			match store_chunk(
-				&subsystem.db,
-				&subsystem.config,
-				candidate_hash,
-				validator_index,
-				chunk,
-			) {
+			match store_chunk(&subsystem.db, &subsystem.config, candidate_hash, chunk) {
 				Ok(true) => {
 					let _ = tx.send(Ok(()));
 				},
@@ -1202,8 +1191,6 @@ fn process_message(
 			n_validators,
 			available_data,
 			expected_erasure_root,
-			core_index,
-			node_features,
 			tx,
 		} => {
 			subsystem.metrics.on_chunks_received(n_validators as _);
@@ -1216,8 +1203,6 @@ fn process_message(
 				n_validators as _,
 				available_data,
 				expected_erasure_root,
-				core_index,
-				node_features,
 			);
 
 			match res {
@@ -1233,7 +1218,7 @@ fn process_message(
 					// tx channel is dropped and that error is caught by the caller subsystem.
 					//
 					// We bubble up the specific error here so `av-store` logs still tell what
-					// happened.
+					// happend.
 					return Err(e.into())
 				},
 			}
@@ -1248,7 +1233,6 @@ fn store_chunk(
 	db: &Arc<dyn Database>,
 	config: &Config,
 	candidate_hash: CandidateHash,
-	validator_index: ValidatorIndex,
 	chunk: ErasureChunk,
 ) -> Result<bool, Error> {
 	let mut tx = DBTransaction::new();
@@ -1258,12 +1242,12 @@ fn store_chunk(
 		None => return Ok(false), // we weren't informed of this candidate by import events.
 	};
 
-	match meta.chunks_stored.get(validator_index.0 as usize).map(|b| *b) {
+	match meta.chunks_stored.get(chunk.index.0 as usize).map(|b| *b) {
 		Some(true) => return Ok(true), // already stored.
 		Some(false) => {
-			meta.chunks_stored.set(validator_index.0 as usize, true);
+			meta.chunks_stored.set(chunk.index.0 as usize, true);
 
-			write_chunk(&mut tx, config, &candidate_hash, validator_index, &chunk);
+			write_chunk(&mut tx, config, &candidate_hash, chunk.index, &chunk);
 			write_meta(&mut tx, config, &candidate_hash, &meta);
 		},
 		None => return Ok(false), // out of bounds.
@@ -1273,7 +1257,6 @@ fn store_chunk(
 		target: LOG_TARGET,
 		?candidate_hash,
 		chunk_index = %chunk.index.0,
-		validator_index = %validator_index.0,
 		"Stored chunk index for candidate.",
 	);
 
@@ -1281,14 +1264,13 @@ fn store_chunk(
 	Ok(true)
 }
 
+// Ok(true) on success, Ok(false) on failure, and Err on internal error.
 fn store_available_data(
 	subsystem: &AvailabilityStoreSubsystem,
 	candidate_hash: CandidateHash,
 	n_validators: usize,
 	available_data: AvailableData,
 	expected_erasure_root: Hash,
-	core_index: CoreIndex,
-	node_features: NodeFeatures,
 ) -> Result<(), Error> {
 	let mut tx = DBTransaction::new();
 
@@ -1321,8 +1303,8 @@ fn store_available_data(
 
 	// Important note: This check below is critical for consensus and the `backing` subsystem relies
 	// on it to ensure candidate validity.
-	let chunks = polkadot_erasure_coding::obtain_chunks_v1(n_validators, &available_data)?;
-	let branches = polkadot_erasure_coding::branches(chunks.as_ref());
+	let chunks = erasure::obtain_chunks_v1(n_validators, &available_data)?;
+	let branches = erasure::branches(chunks.as_ref());
 
 	if branches.root() != expected_erasure_root {
 		return Err(Error::InvalidErasureRoot)
@@ -1330,26 +1312,16 @@ fn store_available_data(
 
 	drop(erasure_span);
 
-	let erasure_chunks: Vec<_> = chunks
-		.iter()
-		.zip(branches.map(|(proof, _)| proof))
-		.enumerate()
-		.map(|(index, (chunk, proof))| ErasureChunk {
+	let erasure_chunks = chunks.iter().zip(branches.map(|(proof, _)| proof)).enumerate().map(
+		|(index, (chunk, proof))| ErasureChunk {
 			chunk: chunk.clone(),
 			proof,
-			index: ChunkIndex(index as u32),
-		})
-		.collect();
+			index: ValidatorIndex(index as u32),
+		},
+	);
 
-	let chunk_indices = availability_chunk_indices(Some(&node_features), n_validators, core_index)?;
-	for (validator_index, chunk_index) in chunk_indices.into_iter().enumerate() {
-		write_chunk(
-			&mut tx,
-			&subsystem.config,
-			&candidate_hash,
-			ValidatorIndex(validator_index as u32),
-			&erasure_chunks[chunk_index.0 as usize],
-		);
+	for chunk in erasure_chunks {
+		write_chunk(&mut tx, &subsystem.config, &candidate_hash, chunk.index, &chunk);
 	}
 
 	meta.data_available = true;

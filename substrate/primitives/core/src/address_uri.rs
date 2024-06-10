@@ -17,7 +17,7 @@
 
 //! Little util for parsing an address URI. Replaces regular expressions.
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), any(feature = "serde", feature = "full_crypto")))]
 use sp_std::{
 	alloc::string::{String, ToString},
 	vec::Vec,
@@ -85,7 +85,7 @@ impl Error {
 
 /// Complementary error information.
 ///
-/// Structure contains complementary information about parsing address URI string.
+/// Strucutre contains complementary information about parsing address URI string.
 /// String contains a copy of an original URI string, 0-based integer indicates position of invalid
 /// character.
 #[derive(Debug, PartialEq, Eq, Clone)]

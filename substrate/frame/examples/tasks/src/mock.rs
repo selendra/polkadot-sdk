@@ -20,45 +20,24 @@
 
 use crate::{self as tasks_example};
 use frame_support::derive_impl;
-use sp_runtime::testing::TestXt;
 
 pub type AccountId = u32;
 pub type Balance = u32;
 
 type Block = frame_system::mocking::MockBlock<Runtime>;
 frame_support::construct_runtime!(
-	pub enum Runtime {
+	pub struct Runtime {
 		System: frame_system,
 		TasksExample: tasks_example,
 	}
 );
 
-pub type Extrinsic = TestXt<RuntimeCall, ()>;
-
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
 	type Block = Block;
-}
-
-impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Runtime
-where
-	RuntimeCall: From<LocalCall>,
-{
-	type OverarchingCall = RuntimeCall;
-	type Extrinsic = Extrinsic;
 }
 
 impl tasks_example::Config for Runtime {
 	type RuntimeTask = RuntimeTask;
 	type WeightInfo = ();
-}
-
-pub fn advance_to(b: u64) {
-	#[cfg(feature = "experimental")]
-	use frame_support::traits::Hooks;
-	while System::block_number() < b {
-		System::set_block_number(System::block_number() + 1);
-		#[cfg(feature = "experimental")]
-		TasksExample::offchain_worker(System::block_number());
-	}
 }

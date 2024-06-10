@@ -18,8 +18,8 @@
 
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use codec::Decode;
 use log::debug;
+use parity_scale_codec::Decode;
 
 use sc_client_api::{backend::Backend, utils::is_descendent_of};
 use sc_consensus::{
@@ -32,6 +32,7 @@ use sp_api::{Core, RuntimeApiInfo};
 use sp_blockchain::BlockStatus;
 use sp_consensus::{BlockOrigin, Error as ConsensusError, SelectChain};
 use sp_consensus_grandpa::{ConsensusLog, GrandpaApi, ScheduledChange, SetId, GRANDPA_ENGINE_ID};
+use sp_core::hashing::twox_128;
 use sp_runtime::{
 	generic::OpaqueDigestItemId,
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
@@ -437,11 +438,7 @@ where
 			// The new API is not supported in this runtime. Try reading directly from storage.
 			// This code may be removed once warp sync to an old runtime is no longer needed.
 			for prefix in ["GrandpaFinality", "Grandpa"] {
-				let k = [
-					sp_crypto_hashing::twox_128(prefix.as_bytes()),
-					sp_crypto_hashing::twox_128(b"CurrentSetId"),
-				]
-				.concat();
+				let k = [twox_128(prefix.as_bytes()), twox_128(b"CurrentSetId")].concat();
 				if let Ok(Some(id)) =
 					self.inner.storage(hash, &sc_client_api::StorageKey(k.to_vec()))
 				{

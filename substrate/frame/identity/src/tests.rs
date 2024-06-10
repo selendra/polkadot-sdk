@@ -25,7 +25,7 @@ use crate::{
 
 use codec::{Decode, Encode};
 use frame_support::{
-	assert_err, assert_noop, assert_ok, derive_impl, parameter_types,
+	assert_noop, assert_ok, derive_impl, parameter_types,
 	traits::{ConstU32, ConstU64, Get, OnFinalize, OnInitialize},
 	BoundedVec,
 };
@@ -47,18 +47,37 @@ type Block = frame_system::mocking::MockBlock<Test>;
 frame_support::construct_runtime!(
 	pub enum Test
 	{
-		System: frame_system,
-		Balances: pallet_balances,
-		Identity: pallet_identity,
+		System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
+		Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
+		Identity: pallet_identity::{Pallet, Call, Storage, Event<T>},
 	}
 );
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
+	type BaseCallFilter = frame_support::traits::Everything;
+	type BlockWeights = ();
+	type BlockLength = ();
+	type RuntimeOrigin = RuntimeOrigin;
+	type Nonce = u64;
+	type Hash = H256;
+	type RuntimeCall = RuntimeCall;
+	type Hashing = BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU64<250>;
+	type DbWeight = ();
+	type Version = ();
+	type PalletInfo = PalletInfo;
 	type AccountData = pallet_balances::AccountData<u64>;
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 impl pallet_balances::Config for Test {
@@ -75,6 +94,7 @@ impl pallet_balances::Config for Test {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type MaxHolds = ();
 }
 
 parameter_types! {
@@ -933,57 +953,6 @@ fn poke_deposit_works() {
 }
 
 #[test]
-fn poke_deposit_does_not_insert_new_subs_storage() {
-	new_test_ext().execute_with(|| {
-		let [_, _, _, _, ten, _, _, _] = accounts();
-		let ten_info = infoof_ten();
-		// Set a custom registration with 0 deposit
-		IdentityOf::<Test>::insert::<
-			_,
-			(
-				Registration<u64, MaxRegistrars, IdentityInfo<MaxAdditionalFields>>,
-				Option<Username<Test>>,
-			),
-		>(
-			&ten,
-			(
-				Registration {
-					judgements: Default::default(),
-					deposit: Zero::zero(),
-					info: ten_info.clone(),
-				},
-				None::<Username<Test>>,
-			),
-		);
-		assert!(Identity::identity(ten.clone()).is_some());
-
-		// Balance is free
-		assert_eq!(Balances::free_balance(ten.clone()), 1000);
-
-		// poke
-		assert_ok!(Identity::poke_deposit(&ten));
-
-		// free balance reduced correctly
-		let id_deposit = id_deposit(&ten_info);
-		assert_eq!(Balances::free_balance(ten.clone()), 1000 - id_deposit);
-		// new registration deposit is 10
-		assert_eq!(
-			Identity::identity(&ten),
-			Some((
-				Registration {
-					judgements: Default::default(),
-					deposit: id_deposit,
-					info: infoof_ten()
-				},
-				None
-			))
-		);
-		// No new subs storage item.
-		assert!(!SubsOf::<Test>::contains_key(&ten));
-	});
-}
-
-#[test]
 fn adding_and_removing_authorities_should_work() {
 	new_test_ext().execute_with(|| {
 		let [authority, _] = unfunded_accounts();
@@ -1042,13 +1011,13 @@ fn set_username_with_signature_without_existing_identity_should_work() {
 
 		// set up username
 		let (username, username_to_sign) = test_username_of(b"42".to_vec(), suffix);
+		let encoded_username = Encode::encode(&username_to_sign.to_vec());
 
 		// set up user and sign message
 		let public = sr25519_generate(0.into(), None);
 		let who_account: AccountIdOf<Test> = MultiSigner::Sr25519(public).into_account().into();
-		let signature = MultiSignature::Sr25519(
-			sr25519_sign(0.into(), &public, &username_to_sign[..]).unwrap(),
-		);
+		let signature =
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &encoded_username).unwrap());
 
 		assert_ok!(Identity::set_username_for(
 			RuntimeOrigin::signed(authority),
@@ -1093,13 +1062,13 @@ fn set_username_with_signature_with_existing_identity_should_work() {
 
 		// set up username
 		let (username, username_to_sign) = test_username_of(b"42".to_vec(), suffix);
+		let encoded_username = Encode::encode(&username_to_sign.to_vec());
 
 		// set up user and sign message
 		let public = sr25519_generate(0.into(), None);
 		let who_account: AccountIdOf<Test> = MultiSigner::Sr25519(public).into_account().into();
-		let signature = MultiSignature::Sr25519(
-			sr25519_sign(0.into(), &public, &username_to_sign[..]).unwrap(),
-		);
+		let signature =
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &encoded_username).unwrap());
 
 		// Set an identity for who. They need some balance though.
 		Balances::make_free_balance_be(&who_account, 1000);
@@ -1156,13 +1125,13 @@ fn set_username_with_bytes_signature_should_work() {
 		let unwrapped_username = username_to_sign.to_vec();
 
 		// Sign an unwrapped version, as in `username.suffix`.
-		let signature_on_unwrapped = MultiSignature::Sr25519(
-			sr25519_sign(0.into(), &public, &unwrapped_username[..]).unwrap(),
-		);
+		let unwrapped_encoded = Encode::encode(&unwrapped_username);
+		let signature_on_unwrapped =
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &unwrapped_encoded).unwrap());
 
 		// Trivial
 		assert_ok!(Identity::validate_signature(
-			&unwrapped_username,
+			&unwrapped_encoded,
 			&signature_on_unwrapped,
 			&who_account
 		));
@@ -1174,7 +1143,7 @@ fn set_username_with_bytes_signature_should_work() {
 		let mut wrapped_username: Vec<u8> =
 			Vec::with_capacity(unwrapped_username.len() + prehtml.len() + posthtml.len());
 		wrapped_username.extend(prehtml);
-		wrapped_username.extend(&unwrapped_username);
+		wrapped_username.extend(unwrapped_encoded.clone());
 		wrapped_username.extend(posthtml);
 		let signature_on_wrapped =
 			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &wrapped_username).unwrap());
@@ -1182,7 +1151,7 @@ fn set_username_with_bytes_signature_should_work() {
 		// We want to call `validate_signature` on the *unwrapped* username, but the signature on
 		// the *wrapped* data.
 		assert_ok!(Identity::validate_signature(
-			&unwrapped_username,
+			&unwrapped_encoded,
 			&signature_on_wrapped,
 			&who_account
 		));
@@ -1401,8 +1370,9 @@ fn setting_primary_should_work() {
 
 		// set up username
 		let (first_username, first_to_sign) = test_username_of(b"42".to_vec(), suffix.clone());
+		let encoded_username = Encode::encode(&first_to_sign.to_vec());
 		let first_signature =
-			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &first_to_sign[..]).unwrap());
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &encoded_username).unwrap());
 
 		assert_ok!(Identity::set_username_for(
 			RuntimeOrigin::signed(authority.clone()),
@@ -1426,8 +1396,9 @@ fn setting_primary_should_work() {
 
 		// set up username
 		let (second_username, second_to_sign) = test_username_of(b"101".to_vec(), suffix);
+		let encoded_username = Encode::encode(&second_to_sign.to_vec());
 		let second_signature =
-			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &second_to_sign[..]).unwrap());
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &encoded_username).unwrap());
 
 		assert_ok!(Identity::set_username_for(
 			RuntimeOrigin::signed(authority),
@@ -1485,72 +1456,6 @@ fn setting_primary_should_work() {
 		assert_eq!(
 			AccountOfUsername::<Test>::get::<&Username<Test>>(&second_to_sign),
 			Some(who_account)
-		);
-	});
-}
-
-#[test]
-fn must_own_primary() {
-	new_test_ext().execute_with(|| {
-		// set up authority
-		let [authority, _] = unfunded_accounts();
-		let suffix: Vec<u8> = b"test".to_vec();
-		let allocation: u32 = 10;
-		assert_ok!(Identity::add_username_authority(
-			RuntimeOrigin::root(),
-			authority.clone(),
-			suffix.clone(),
-			allocation
-		));
-
-		// Set up first user ("pi") and a username.
-		let pi_public = sr25519_generate(0.into(), None);
-		let pi_account: AccountIdOf<Test> = MultiSigner::Sr25519(pi_public).into_account().into();
-		let (pi_username, pi_to_sign) =
-			test_username_of(b"username314159".to_vec(), suffix.clone());
-		let pi_signature =
-			MultiSignature::Sr25519(sr25519_sign(0.into(), &pi_public, &pi_to_sign[..]).unwrap());
-		assert_ok!(Identity::set_username_for(
-			RuntimeOrigin::signed(authority.clone()),
-			pi_account.clone(),
-			pi_username.clone(),
-			Some(pi_signature)
-		));
-
-		// Set up second user ("e") and a username.
-		let e_public = sr25519_generate(1.into(), None);
-		let e_account: AccountIdOf<Test> = MultiSigner::Sr25519(e_public).into_account().into();
-		let (e_username, e_to_sign) = test_username_of(b"username271828".to_vec(), suffix.clone());
-		let e_signature =
-			MultiSignature::Sr25519(sr25519_sign(1.into(), &e_public, &e_to_sign[..]).unwrap());
-		assert_ok!(Identity::set_username_for(
-			RuntimeOrigin::signed(authority.clone()),
-			e_account.clone(),
-			e_username.clone(),
-			Some(e_signature)
-		));
-
-		// Ensure that both users have their usernames.
-		assert_eq!(
-			AccountOfUsername::<Test>::get::<&Username<Test>>(&pi_to_sign),
-			Some(pi_account.clone())
-		);
-		assert_eq!(
-			AccountOfUsername::<Test>::get::<&Username<Test>>(&e_to_sign),
-			Some(e_account.clone())
-		);
-
-		// Cannot set primary to a username that does not exist.
-		let (_, c_username) = test_username_of(b"speedoflight".to_vec(), suffix.clone());
-		assert_err!(
-			Identity::set_primary_username(RuntimeOrigin::signed(pi_account.clone()), c_username,),
-			Error::<Test>::NoUsername
-		);
-
-		// Cannot take someone else's username as your primary.
-		assert_err!(
-			Identity::set_primary_username(RuntimeOrigin::signed(pi_account.clone()), e_to_sign,),
-			Error::<Test>::InvalidUsername
 		);
 	});
 }
@@ -1627,13 +1532,13 @@ fn removing_dangling_usernames_should_work() {
 
 		// set up username
 		let (username, username_to_sign) = test_username_of(b"42".to_vec(), suffix.clone());
+		let encoded_username = Encode::encode(&username_to_sign.to_vec());
 
 		// set up user and sign message
 		let public = sr25519_generate(0.into(), None);
 		let who_account: AccountIdOf<Test> = MultiSigner::Sr25519(public).into_account().into();
-		let signature = MultiSignature::Sr25519(
-			sr25519_sign(0.into(), &public, &username_to_sign[..]).unwrap(),
-		);
+		let signature =
+			MultiSignature::Sr25519(sr25519_sign(0.into(), &public, &encoded_username).unwrap());
 
 		// Set an identity for who. They need some balance though.
 		Balances::make_free_balance_be(&who_account, 1000);
@@ -1651,10 +1556,11 @@ fn removing_dangling_usernames_should_work() {
 
 		// Now they set up a second username.
 		let (username_two, username_two_to_sign) = test_username_of(b"43".to_vec(), suffix);
+		let encoded_username_two = Encode::encode(&username_two_to_sign.to_vec());
 
 		// set up user and sign message
 		let signature_two = MultiSignature::Sr25519(
-			sr25519_sign(0.into(), &public, &username_two_to_sign[..]).unwrap(),
+			sr25519_sign(0.into(), &public, &encoded_username_two).unwrap(),
 		);
 
 		assert_ok!(Identity::set_username_for(

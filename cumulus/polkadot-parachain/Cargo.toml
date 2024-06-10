@@ -1,6 +1,6 @@
 [package]
 name = "polkadot-parachain-bin"
-version = "4.0.0"
+version = "1.6.0"
 authors.workspace = true
 build = "build.rs"
 edition.workspace = true
@@ -15,14 +15,14 @@ name = "polkadot-parachain"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1.79"
-clap = { version = "4.5.3", features = ["derive"] }
-codec = { package = "parity-scale-codec", version = "3.6.12" }
+async-trait = "0.1.74"
+clap = { version = "4.4.14", features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "3.0.0" }
 futures = "0.3.28"
 hex-literal = "0.4.1"
-log = { workspace = true, default-features = true }
-serde = { features = ["derive"], workspace = true, default-features = true }
-serde_json = { workspace = true, default-features = true }
+log = "0.4.20"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
 
 # Local
 rococo-parachain-runtime = { path = "../parachains/runtimes/testing/rococo-parachain" }
@@ -38,14 +38,10 @@ coretime-rococo-runtime = { path = "../parachains/runtimes/coretime/coretime-roc
 coretime-westend-runtime = { path = "../parachains/runtimes/coretime/coretime-westend" }
 bridge-hub-westend-runtime = { path = "../parachains/runtimes/bridge-hubs/bridge-hub-westend" }
 penpal-runtime = { path = "../parachains/runtimes/testing/penpal" }
-jsonrpsee = { version = "0.22", features = ["server"] }
 people-rococo-runtime = { path = "../parachains/runtimes/people/people-rococo" }
 people-westend-runtime = { path = "../parachains/runtimes/people/people-westend" }
+jsonrpsee = { version = "0.16.2", features = ["server"] }
 parachains-common = { path = "../parachains/common" }
-testnet-parachains-constants = { path = "../parachains/runtimes/constants", default-features = false, features = [
-	"rococo",
-	"westend",
-] }
 
 # Substrate
 frame-benchmarking = { path = "../../substrate/frame/benchmarking" }
@@ -86,9 +82,9 @@ sp-inherents = { path = "../../substrate/primitives/inherents" }
 sp-api = { path = "../../substrate/primitives/api" }
 sp-consensus-aura = { path = "../../substrate/primitives/consensus/aura" }
 sc-sysinfo = { path = "../../substrate/client/sysinfo" }
-prometheus-endpoint = { package = "substrate-prometheus-endpoint", path = "../../substrate/utils/prometheus" }
+substrate-prometheus-endpoint = { path = "../../substrate/utils/prometheus" }
 sc-transaction-pool-api = { path = "../../substrate/client/transaction-pool/api" }
-substrate-frame-rpc-system = { path = "../../substrate/utils/frame/rpc/system" }
+frame-rpc-system = { package = "substrate-frame-rpc-system", path = "../../substrate/utils/frame/rpc/system" }
 pallet-transaction-payment-rpc = { path = "../../substrate/frame/transaction-payment/rpc" }
 substrate-state-trie-migration-rpc = { path = "../../substrate/utils/frame/rpc/state-trie-migration-rpc" }
 
@@ -118,7 +114,7 @@ substrate-build-script-utils = { path = "../../substrate/utils/build-script-util
 
 [dev-dependencies]
 assert_cmd = "2.0"
-nix = { version = "0.28.0", features = ["signal"] }
+nix = { version = "0.26.1", features = ["signal"] }
 tempfile = "3.8.0"
 tokio = { version = "1.32.0", features = ["macros", "parking_lot", "time"] }
 wait-timeout = "0.2"
@@ -171,4 +167,6 @@ try-runtime = [
 	"shell-runtime/try-runtime",
 	"sp-runtime/try-runtime",
 ]
-fast-runtime = ["bridge-hub-rococo-runtime/fast-runtime"]
+fast-runtime = [
+	"bridge-hub-rococo-runtime/fast-runtime",
+]

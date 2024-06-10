@@ -18,14 +18,16 @@
 //! to always return an empty set of disabled validators.
 
 use polkadot_cli::{
+	prepared_overseer_builder,
 	service::{
-		AuxStore, Error, ExtendedOverseerGenArgs, Overseer, OverseerConnector, OverseerGen,
-		OverseerGenArgs, OverseerHandle,
+		AuthorityDiscoveryApi, AuxStore, BabeApi, Block, Error, HeaderBackend, Overseer,
+		OverseerConnector, OverseerGen, OverseerGenArgs, OverseerHandle, ParachainHost,
+		ProvideRuntimeApi,
 	},
-	validator_overseer_builder, Cli,
+	Cli,
 };
 use polkadot_node_subsystem::SpawnGlue;
-use polkadot_node_subsystem_types::{ChainApiBackend, RuntimeApiSubsystemClient};
+use polkadot_node_subsystem_types::DefaultSubsystemClient;
 use sp_core::traits::SpawnNamed;
 
 use crate::interceptor::*;
@@ -48,21 +50,21 @@ impl OverseerGen for SupportDisabled {
 		&self,
 		connector: OverseerConnector,
 		args: OverseerGenArgs<'_, Spawner, RuntimeClient>,
-		ext_args: Option<ExtendedOverseerGenArgs>,
-	) -> Result<(Overseer<SpawnGlue<Spawner>, Arc<RuntimeClient>>, OverseerHandle), Error>
+	) -> Result<
+		(Overseer<SpawnGlue<Spawner>, Arc<DefaultSubsystemClient<RuntimeClient>>>, OverseerHandle),
+		Error,
+	>
 	where
-		RuntimeClient: RuntimeApiSubsystemClient + ChainApiBackend + AuxStore + 'static,
+		RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,
+		RuntimeClient::Api: ParachainHost<Block> + BabeApi<Block> + AuthorityDiscoveryApi<Block>,
 		Spawner: 'static + SpawnNamed + Clone + Unpin,
 	{
-		validator_overseer_builder(
-			args,
-			ext_args.expect("Extended arguments required to build validator overseer are provided"),
-		)?
-		.replace_runtime_api(move |ra_subsystem| {
-			InterceptedSubsystem::new(ra_subsystem, IgnoreDisabled)
-		})
-		.build_with_connector(connector)
-		.map_err(|e| e.into())
+		prepared_overseer_builder(args)?
+			.replace_runtime_api(move |ra_subsystem| {
+				InterceptedSubsystem::new(ra_subsystem, IgnoreDisabled)
+			})
+			.build_with_connector(connector)
+			.map_err(|e| e.into())
 	}
 }
 

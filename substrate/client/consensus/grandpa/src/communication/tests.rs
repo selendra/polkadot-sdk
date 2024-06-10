@@ -23,21 +23,21 @@ use super::{
 	Round, SetId, VoterSet,
 };
 use crate::{communication::grandpa_protocol_name, environment::SharedVoterSetState};
-use codec::{DecodeAll, Encode};
 use futures::prelude::*;
+use parity_scale_codec::{DecodeAll, Encode};
 use sc_network::{
 	config::{MultiaddrWithPeerId, Role},
 	event::Event as NetworkEvent,
 	service::traits::{Direction, MessageSink, NotificationEvent, NotificationService},
 	types::ProtocolName,
-	Multiaddr, NetworkBlock, NetworkEventStream, NetworkPeers, NetworkSyncForkRequest,
-	ReputationChange,
+	Multiaddr, NetworkBlock, NetworkEventStream, NetworkNotification, NetworkPeers,
+	NetworkSyncForkRequest, NotificationSenderError, NotificationSenderT as NotificationSender,
+	PeerId, ReputationChange,
 };
 use sc_network_common::role::{ObservedRole, Roles};
 use sc_network_gossip::Validator;
 use sc_network_sync::{SyncEvent as SyncStreamEvent, SyncEventStream};
 use sc_network_test::{Block, Hash};
-use sc_network_types::PeerId;
 use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_consensus_grandpa::AuthorityList;
 use sp_keyring::Ed25519Keyring;
@@ -51,8 +51,10 @@ use std::{
 
 #[derive(Debug)]
 pub(crate) enum Event {
+	EventStream(TracingUnboundedSender<NetworkEvent>),
 	WriteNotification(PeerId, Vec<u8>),
 	Report(PeerId, ReputationChange),
+	Announce(Hash),
 }
 
 #[derive(Clone)]
@@ -60,7 +62,6 @@ pub(crate) struct TestNetwork {
 	sender: TracingUnboundedSender<Event>,
 }
 
-#[async_trait::async_trait]
 impl NetworkPeers for TestNetwork {
 	fn set_authorized_peers(&self, _peers: HashSet<PeerId>) {
 		unimplemented!();
@@ -133,10 +134,6 @@ impl NetworkPeers for TestNetwork {
 			.ok()
 			.and_then(|role| Some(ObservedRole::from(role)))
 	}
-
-	async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
-		unimplemented!();
-	}
 }
 
 impl NetworkEventStream for TestNetwork {
@@ -144,13 +141,33 @@ impl NetworkEventStream for TestNetwork {
 		&self,
 		_name: &'static str,
 	) -> Pin<Box<dyn Stream<Item = NetworkEvent> + Send>> {
-		futures::stream::pending().boxed()
+		let (tx, rx) = tracing_unbounded("test", 100_000);
+		let _ = self.sender.unbounded_send(Event::EventStream(tx));
+		Box::pin(rx)
+	}
+}
+
+impl NetworkNotification for TestNetwork {
+	fn write_notification(&self, target: PeerId, _protocol: ProtocolName, message: Vec<u8>) {
+		let _ = self.sender.unbounded_send(Event::WriteNotification(target, message));
+	}
+
+	fn notification_sender(
+		&self,
+		_target: PeerId,
+		_protocol: ProtocolName,
+	) -> Result<Box<dyn NotificationSender>, NotificationSenderError> {
+		unimplemented!();
+	}
+
+	fn set_notification_handshake(&self, _protocol: ProtocolName, _handshake: Vec<u8>) {
+		unimplemented!();
 	}
 }
 
 impl NetworkBlock<Hash, NumberFor<Block>> for TestNetwork {
-	fn announce_block(&self, _: Hash, _data: Option<Vec<u8>>) {
-		unimplemented!();
+	fn announce_block(&self, hash: Hash, _data: Option<Vec<u8>>) {
+		let _ = self.sender.unbounded_send(Event::Announce(hash));
 	}
 
 	fn new_best_block_imported(&self, _hash: Hash, _number: NumberFor<Block>) {
@@ -168,7 +185,12 @@ impl sc_network_gossip::ValidatorContext<Block> for TestNetwork {
 	fn broadcast_message(&mut self, _: Hash, _: Vec<u8>, _: bool) {}
 
 	fn send_message(&mut self, who: &PeerId, data: Vec<u8>) {
-		let _ = self.sender.unbounded_send(Event::WriteNotification(*who, data));
+		<Self as NetworkNotification>::write_notification(
+			self,
+			*who,
+			grandpa_protocol_name::NAME.into(),
+			data,
+		);
 	}
 
 	fn send_topic(&mut self, _: &PeerId, _: Hash, _: bool) {}
@@ -219,13 +241,13 @@ impl NotificationService for TestNotificationService {
 	}
 
 	/// Send synchronous `notification` to `peer`.
-	fn send_sync_notification(&mut self, peer: &PeerId, notification: Vec<u8>) {
+	fn send_sync_notification(&self, peer: &PeerId, notification: Vec<u8>) {
 		let _ = self.sender.unbounded_send(Event::WriteNotification(*peer, notification));
 	}
 
 	/// Send asynchronous `notification` to `peer`, allowing sender to exercise backpressure.
 	async fn send_async_notification(
-		&mut self,
+		&self,
 		_peer: &PeerId,
 		_notification: Vec<u8>,
 	) -> Result<(), sc_network::error::Error> {
@@ -706,12 +728,25 @@ fn peer_with_higher_view_leads_to_catch_up_request() {
 }
 
 fn local_chain_spec() -> Box<dyn sc_chain_spec::ChainSpec> {
-	let chain_spec =
-		sc_chain_spec::GenericChainSpec::<sc_chain_spec::NoExtension, ()>::from_json_bytes(
-			&include_bytes!("../../../../chain-spec/res/chain_spec.json")[..],
-		)
-		.unwrap();
-	sc_chain_spec::ChainSpec::cloned_box(&chain_spec)
+	use sc_chain_spec::{ChainSpec, GenericChainSpec};
+	use serde::{Deserialize, Serialize};
+	use sp_runtime::{BuildStorage, Storage};
+
+	#[derive(Debug, Serialize, Deserialize)]
+	struct Genesis(std::collections::BTreeMap<String, String>);
+	impl BuildStorage for Genesis {
+		fn assimilate_storage(&self, storage: &mut Storage) -> Result<(), String> {
+			storage.top.extend(
+				self.0.iter().map(|(a, b)| (a.clone().into_bytes(), b.clone().into_bytes())),
+			);
+			Ok(())
+		}
+	}
+	let chain_spec = GenericChainSpec::<Genesis>::from_json_bytes(
+		&include_bytes!("../../../../chain-spec/res/chain_spec.json")[..],
+	)
+	.unwrap();
+	chain_spec.cloned_box()
 }
 
 #[test]

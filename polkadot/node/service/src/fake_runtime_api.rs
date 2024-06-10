@@ -19,6 +19,8 @@
 //! These are used to provide a type that implements these runtime APIs without requiring to import
 //! the native runtimes.
 
+use beefy_primitives::ecdsa_crypto::{AuthorityId as BeefyId, Signature as BeefySignature};
+use grandpa_primitives::AuthorityId as GrandpaId;
 use pallet_transaction_payment::{FeeDetails, RuntimeDispatchInfo};
 use polkadot_primitives::{
 	runtime_api, slashing, AccountId, AuthorityDiscoveryId, Balance, Block, BlockNumber,
@@ -28,9 +30,6 @@ use polkadot_primitives::{
 	ScrapedOnChainVotes, SessionIndex, SessionInfo, ValidationCode, ValidationCodeHash,
 	ValidatorId, ValidatorIndex, ValidatorSignature,
 };
-use sp_consensus_beefy::ecdsa_crypto::{AuthorityId as BeefyId, Signature as BeefySignature};
-use sp_consensus_grandpa::AuthorityId as GrandpaId;
-
 use sp_core::OpaqueMetadata;
 use sp_runtime::{
 	traits::Block as BlockT,
@@ -40,7 +39,7 @@ use sp_runtime::{
 use sp_version::RuntimeVersion;
 use sp_weights::Weight;
 use std::collections::BTreeMap;
-use xcm::{VersionedAssetId, VersionedAssets, VersionedLocation, VersionedXcm};
+
 sp_api::decl_runtime_apis! {
 	/// This runtime API is only implemented for the test runtime!
 	pub trait GetLastTimestamp {
@@ -61,7 +60,7 @@ sp_api::impl_runtime_apis! {
 			unimplemented!()
 		}
 
-		fn initialize_block(_: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
+		fn initialize_block(_: &<Block as BlockT>::Header) {
 			unimplemented!()
 		}
 	}
@@ -232,30 +231,30 @@ sp_api::impl_runtime_apis! {
 		}
 	}
 
-	impl sp_consensus_beefy::BeefyApi<Block, BeefyId> for Runtime {
+	impl beefy_primitives::BeefyApi<Block, BeefyId> for Runtime {
 		fn beefy_genesis() -> Option<BlockNumber> {
 			unimplemented!()
 		}
 
-		fn validator_set() -> Option<sp_consensus_beefy::ValidatorSet<BeefyId>> {
+		fn validator_set() -> Option<beefy_primitives::ValidatorSet<BeefyId>> {
 			unimplemented!()
 		}
 
 		fn submit_report_equivocation_unsigned_extrinsic(
-			_: sp_consensus_beefy::DoubleVotingProof<
+			_: beefy_primitives::EquivocationProof<
 				BlockNumber,
 				BeefyId,
 				BeefySignature,
 			>,
-			_: sp_consensus_beefy::OpaqueKeyOwnershipProof,
+			_: beefy_primitives::OpaqueKeyOwnershipProof,
 		) -> Option<()> {
 			unimplemented!()
 		}
 
 		fn generate_key_ownership_proof(
-			_: sp_consensus_beefy::ValidatorSetId,
+			_: beefy_primitives::ValidatorSetId,
 			_: BeefyId,
-		) -> Option<sp_consensus_beefy::OpaqueKeyOwnershipProof> {
+		) -> Option<beefy_primitives::OpaqueKeyOwnershipProof> {
 			unimplemented!()
 		}
 	}
@@ -272,11 +271,11 @@ sp_api::impl_runtime_apis! {
 		fn generate_proof(
 			_: Vec<BlockNumber>,
 			_: Option<BlockNumber>,
-		) -> Result<(Vec<sp_mmr_primitives::EncodableOpaqueLeaf>, sp_mmr_primitives::LeafProof<Hash>), sp_mmr_primitives::Error> {
+		) -> Result<(Vec<sp_mmr_primitives::EncodableOpaqueLeaf>, sp_mmr_primitives::Proof<Hash>), sp_mmr_primitives::Error> {
 			unimplemented!()
 		}
 
-		fn verify_proof(_: Vec<sp_mmr_primitives::EncodableOpaqueLeaf>, _: sp_mmr_primitives::LeafProof<Hash>)
+		fn verify_proof(_: Vec<sp_mmr_primitives::EncodableOpaqueLeaf>, _: sp_mmr_primitives::Proof<Hash>)
 			-> Result<(), sp_mmr_primitives::Error>
 		{
 			unimplemented!()
@@ -285,35 +284,35 @@ sp_api::impl_runtime_apis! {
 		fn verify_proof_stateless(
 			_: Hash,
 			_: Vec<sp_mmr_primitives::EncodableOpaqueLeaf>,
-			_: sp_mmr_primitives::LeafProof<Hash>
+			_: sp_mmr_primitives::Proof<Hash>
 		) -> Result<(), sp_mmr_primitives::Error> {
 			unimplemented!()
 		}
 	}
 
-	impl sp_consensus_grandpa::GrandpaApi<Block> for Runtime {
+	impl grandpa_primitives::GrandpaApi<Block> for Runtime {
 		fn grandpa_authorities() -> Vec<(GrandpaId, u64)> {
 			unimplemented!()
 		}
 
-		fn current_set_id() -> sp_consensus_grandpa::SetId {
+		fn current_set_id() -> grandpa_primitives::SetId {
 			unimplemented!()
 		}
 
 		fn submit_report_equivocation_unsigned_extrinsic(
-			_: sp_consensus_grandpa::EquivocationProof<
+			_: grandpa_primitives::EquivocationProof<
 				<Block as BlockT>::Hash,
 				sp_runtime::traits::NumberFor<Block>,
 			>,
-			_: sp_consensus_grandpa::OpaqueKeyOwnershipProof,
+			_: grandpa_primitives::OpaqueKeyOwnershipProof,
 		) -> Option<()> {
 			unimplemented!()
 		}
 
 		fn generate_key_ownership_proof(
-			_: sp_consensus_grandpa::SetId,
-			_: sp_consensus_grandpa::AuthorityId,
-		) -> Option<sp_consensus_grandpa::OpaqueKeyOwnershipProof> {
+			_: grandpa_primitives::SetId,
+			_: grandpa_primitives::AuthorityId,
+		) -> Option<grandpa_primitives::OpaqueKeyOwnershipProof> {
 			unimplemented!()
 		}
 	}
@@ -394,34 +393,6 @@ sp_api::impl_runtime_apis! {
 
 	impl crate::fake_runtime_api::GetLastTimestamp<Block> for Runtime {
 		fn get_last_timestamp() -> u64 {
-			unimplemented!()
-		}
-	}
-
-	impl xcm_fee_payment_runtime_api::fees::XcmPaymentApi<Block> for Runtime {
-		fn query_acceptable_payment_assets(_: xcm::Version) -> Result<Vec<VersionedAssetId>, xcm_fee_payment_runtime_api::fees::Error> {
-			unimplemented!()
-		}
-
-		fn query_weight_to_asset_fee(_: Weight, _: VersionedAssetId) -> Result<u128, xcm_fee_payment_runtime_api::fees::Error> {
-			unimplemented!()
-		}
-
-		fn query_xcm_weight(_: VersionedXcm<()>) -> Result<Weight, xcm_fee_payment_runtime_api::fees::Error> {
-			unimplemented!()
-		}
-
-		fn query_delivery_fees(_: VersionedLocation, _: VersionedXcm<()>) -> Result<VersionedAssets, xcm_fee_payment_runtime_api::fees::Error> {
-			unimplemented!()
-		}
-	}
-
-	impl xcm_fee_payment_runtime_api::dry_run::DryRunApi<Block, (), (), ()> for Runtime {
-		fn dry_run_call(_: (), _: ()) -> Result<xcm_fee_payment_runtime_api::dry_run::CallDryRunEffects<()>, xcm_fee_payment_runtime_api::dry_run::Error> {
-			unimplemented!()
-		}
-
-		fn dry_run_xcm(_: VersionedLocation, _: VersionedXcm<()>) -> Result<xcm_fee_payment_runtime_api::dry_run::XcmDryRunEffects<()>, xcm_fee_payment_runtime_api::dry_run::Error> {
 			unimplemented!()
 		}
 	}

@@ -29,7 +29,7 @@ use frame_support::{
 };
 use frame_system::{EnsureRoot, EnsureSignedBy};
 use sp_arithmetic::Perbill;
-use sp_core::{ConstU32, ConstU64, Get};
+use sp_core::{ConstU32, ConstU64};
 use sp_runtime::{
 	traits::{BlockNumberProvider, Identity},
 	BuildStorage, Saturating,
@@ -47,7 +47,7 @@ frame_support::construct_runtime!(
 	}
 );
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
 	type Block = Block;
 }
@@ -77,7 +77,7 @@ pub struct TestCoretimeProvider;
 impl CoretimeInterface for TestCoretimeProvider {
 	type AccountId = u64;
 	type Balance = u64;
-	type RelayChainBlockNumberProvider = System;
+	type RealyChainBlockNumberProvider = System;
 	fn request_core_count(count: CoreIndex) {
 		CoreCountInbox::<Test>::put(count);
 	}
@@ -199,7 +199,7 @@ impl crate::Config for Test {
 	type WeightInfo = ();
 	type PalletId = TestBrokerId;
 	type AdminOrigin = EnsureOneOrRoot;
-	type PriceAdapter = CenterTargetPrice<BalanceOf<Self>>;
+	type PriceAdapter = Linear;
 }
 
 pub fn advance_to(b: u64) {
@@ -208,15 +208,6 @@ pub fn advance_to(b: u64) {
 		TestCoretimeProvider::bump();
 		Broker::on_initialize(System::block_number());
 	}
-}
-
-pub fn advance_sale_period() {
-	let sale = SaleInfo::<Test>::get().unwrap();
-
-	let target_block_number =
-		sale.region_begin as u64 * <<Test as crate::Config>::TimeslicePeriod as Get<u64>>::get();
-
-	advance_to(target_block_number)
 }
 
 pub fn pot() -> u64 {
@@ -253,10 +244,6 @@ pub struct TestExt(ConfigRecordOf<Test>);
 impl TestExt {
 	pub fn new() -> Self {
 		Self(new_config())
-	}
-
-	pub fn new_with_config(config: ConfigRecordOf<Test>) -> Self {
-		Self(config)
 	}
 
 	pub fn advance_notice(mut self, advance_notice: Timeslice) -> Self {

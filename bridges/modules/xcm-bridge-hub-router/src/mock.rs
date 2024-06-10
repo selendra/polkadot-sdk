@@ -19,16 +19,14 @@
 use crate as pallet_xcm_bridge_hub_router;
 
 use bp_xcm_bridge_hub_router::XcmChannelStatusProvider;
-use codec::Encode;
 use frame_support::{
 	construct_runtime, derive_impl, parameter_types,
 	traits::{Contains, Equals},
 };
 use frame_system::EnsureRoot;
 use sp_runtime::{traits::ConstU128, BuildStorage};
-use sp_std::cell::RefCell;
 use xcm::prelude::*;
-use xcm_builder::{InspectMessageQueues, NetworkExportTable, NetworkExportTableItem};
+use xcm_builder::{NetworkExportTable, NetworkExportTableItem};
 
 pub type AccountId = u64;
 type Block = frame_system::mocking::MockBlock<TestRuntime>;
@@ -51,9 +49,9 @@ construct_runtime! {
 parameter_types! {
 	pub ThisNetworkId: NetworkId = Polkadot;
 	pub BridgedNetworkId: NetworkId = Kusama;
-	pub UniversalLocation: InteriorLocation = [GlobalConsensus(ThisNetworkId::get()), Parachain(1000)].into();
-	pub SiblingBridgeHubLocation: Location = ParentThen([Parachain(1002)].into()).into();
-	pub BridgeFeeAsset: AssetId = Location::parent().into();
+	pub UniversalLocation: InteriorMultiLocation = X2(GlobalConsensus(ThisNetworkId::get()), Parachain(1000));
+	pub SiblingBridgeHubLocation: MultiLocation = ParentThen(X1(Parachain(1002))).into();
+	pub BridgeFeeAsset: AssetId = MultiLocation::parent().into();
 	pub BridgeTable: Vec<NetworkExportTableItem>
 		= vec![
 			NetworkExportTableItem::new(
@@ -63,10 +61,10 @@ parameter_types! {
 				Some((BridgeFeeAsset::get(), BASE_FEE).into())
 			)
 		];
-	pub UnknownXcmVersionForRoutableLocation: Location = Location::new(2, [GlobalConsensus(BridgedNetworkId::get()), Parachain(9999)]);
+	pub UnknownXcmVersionLocation: MultiLocation = MultiLocation::new(2, X2(GlobalConsensus(BridgedNetworkId::get()), Parachain(9999)));
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for TestRuntime {
 	type Block = Block;
 }
@@ -78,7 +76,7 @@ impl pallet_xcm_bridge_hub_router::Config<()> for TestRuntime {
 	type BridgedNetworkId = BridgedNetworkId;
 	type Bridges = NetworkExportTable<BridgeTable>;
 	type DestinationVersion =
-		LatestOrNoneForLocationVersionChecker<Equals<UnknownXcmVersionForRoutableLocation>>;
+		LatestOrNoneForLocationVersionChecker<Equals<UnknownXcmVersionLocation>>;
 
 	type BridgeHubOrigin = EnsureRoot<AccountId>;
 	type ToBridgeHubSender = TestToBridgeHubSender;
@@ -89,11 +87,11 @@ impl pallet_xcm_bridge_hub_router::Config<()> for TestRuntime {
 }
 
 pub struct LatestOrNoneForLocationVersionChecker<Location>(sp_std::marker::PhantomData<Location>);
-impl<LocationValue: Contains<Location>> GetVersion
-	for LatestOrNoneForLocationVersionChecker<LocationValue>
+impl<Location: Contains<MultiLocation>> GetVersion
+	for LatestOrNoneForLocationVersionChecker<Location>
 {
-	fn get_version_for(dest: &Location) -> Option<XcmVersion> {
-		if LocationValue::contains(dest) {
+	fn get_version_for(dest: &MultiLocation) -> Option<XcmVersion> {
+		if Location::contains(dest) {
 			return None
 		}
 		Some(XCM_VERSION)
@@ -104,46 +102,23 @@ pub struct TestToBridgeHubSender;
 
 impl TestToBridgeHubSender {
 	pub fn is_message_sent() -> bool {
-		!Self::get_messages().is_empty()
+		frame_support::storage::unhashed::get_or_default(b"TestToBridgeHubSender.Sent")
 	}
-}
-
-thread_local! {
-	pub static SENT_XCM: RefCell<Vec<(Location, Xcm<()>)>> = RefCell::new(Vec::new());
 }
 
 impl SendXcm for TestToBridgeHubSender {
-	type Ticket = (Location, Xcm<()>);
+	type Ticket = ();
 
 	fn validate(
-		destination: &mut Option<Location>,
-		message: &mut Option<Xcm<()>>,
+		_destination: &mut Option<MultiLocation>,
+		_message: &mut Option<Xcm<()>>,
 	) -> SendResult<Self::Ticket> {
-		let pair = (destination.take().unwrap(), message.take().unwrap());
-		Ok((pair, (BridgeFeeAsset::get(), HRMP_FEE).into()))
+		Ok(((), (BridgeFeeAsset::get(), HRMP_FEE).into()))
 	}
 
-	fn deliver(pair: Self::Ticket) -> Result<XcmHash, SendError> {
-		let hash = fake_message_hash(&pair.1);
-		SENT_XCM.with(|q| q.borrow_mut().push(pair));
-		Ok(hash)
-	}
-}
-
-impl InspectMessageQueues for TestToBridgeHubSender {
-	fn get_messages() -> Vec<(VersionedLocation, Vec<VersionedXcm<()>>)> {
-		SENT_XCM.with(|q| {
-			(*q.borrow())
-				.clone()
-				.iter()
-				.map(|(location, message)| {
-					(
-						VersionedLocation::V4(location.clone()),
-						vec![VersionedXcm::V4(message.clone())],
-					)
-				})
-				.collect()
-		})
+	fn deliver(_ticket: Self::Ticket) -> Result<XcmHash, SendError> {
+		frame_support::storage::unhashed::put(b"TestToBridgeHubSender.Sent", &true);
+		Ok([0u8; 32])
 	}
 }
 
@@ -170,8 +145,4 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 /// Run pallet test.
 pub fn run_test<T>(test: impl FnOnce() -> T) -> T {
 	new_test_ext().execute_with(test)
-}
-
-pub(crate) fn fake_message_hash<T>(message: &Xcm<T>) -> XcmHash {
-	message.using_encoded(sp_io::hashing::blake2_256)
 }

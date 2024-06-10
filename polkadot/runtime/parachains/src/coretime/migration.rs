@@ -27,10 +27,6 @@ mod v_coretime {
 		paras,
 	};
 	#[cfg(feature = "try-runtime")]
-	use codec::Decode;
-	#[cfg(feature = "try-runtime")]
-	use codec::Encode;
-	#[cfg(feature = "try-runtime")]
 	use frame_support::ensure;
 	use frame_support::{
 		traits::{OnRuntimeUpgrade, PalletInfoAccess, StorageVersion},
@@ -38,15 +34,21 @@ mod v_coretime {
 	};
 	use frame_system::pallet_prelude::BlockNumberFor;
 	use pallet_broker::{CoreAssignment, CoreMask, ScheduleItem};
+	#[cfg(feature = "try-runtime")]
+	use parity_scale_codec::Decode;
+	#[cfg(feature = "try-runtime")]
+	use parity_scale_codec::Encode;
 	use polkadot_parachain_primitives::primitives::IsSystem;
-	use polkadot_primitives::{CoreIndex, Id as ParaId};
+	use primitives::{CoreIndex, Id as ParaId};
 	use sp_arithmetic::traits::SaturatedConversion;
 	use sp_core::Get;
 	use sp_runtime::BoundedVec;
 	#[cfg(feature = "try-runtime")]
 	use sp_std::vec::Vec;
 	use sp_std::{iter, prelude::*, result};
-	use xcm::prelude::{send_xcm, Instruction, Junction, Location, SendError, WeightLimit, Xcm};
+	use xcm::v3::{
+		send_xcm, Instruction, Junction, Junctions, MultiLocation, SendError, WeightLimit, Xcm,
+	};
 
 	/// Return information about a legacy lease of a parachain.
 	pub trait GetLegacyLease<N> {
@@ -62,7 +64,7 @@ mod v_coretime {
 		sp_std::marker::PhantomData<(T, SendXcm, LegacyLease)>,
 	);
 
-	impl<T: Config, SendXcm: xcm::v4::SendXcm, LegacyLease: GetLegacyLease<BlockNumberFor<T>>>
+	impl<T: Config, SendXcm: xcm::v3::SendXcm, LegacyLease: GetLegacyLease<BlockNumberFor<T>>>
 		MigrateToCoretime<T, SendXcm, LegacyLease>
 	{
 		fn already_migrated() -> bool {
@@ -74,7 +76,7 @@ mod v_coretime {
 
 			loop {
 				match sp_io::storage::next_key(&next_key) {
-					// StorageVersion is initialized before, so we need to ignore it.
+					// StorageVersion is initialized before, so we need to ingore it.
 					Some(key) if &key == &storage_version_key => {
 						next_key = key;
 					},
@@ -93,7 +95,7 @@ mod v_coretime {
 
 	impl<
 			T: Config + crate::dmp::Config,
-			SendXcm: xcm::v4::SendXcm,
+			SendXcm: xcm::v3::SendXcm,
 			LegacyLease: GetLegacyLease<BlockNumberFor<T>>,
 		> OnRuntimeUpgrade for MigrateToCoretime<T, SendXcm, LegacyLease>
 	{
@@ -113,8 +115,8 @@ mod v_coretime {
 			}
 
 			let legacy_paras = paras::Parachains::<T>::get();
-			let config = configuration::ActiveConfig::<T>::get();
-			let total_core_count = config.scheduler_params.num_cores + legacy_paras.len() as u32;
+			let config = <configuration::Pallet<T>>::config();
+			let total_core_count = config.coretime_cores + legacy_paras.len() as u32;
 
 			let dmp_queue_size =
 				crate::dmp::Pallet::<T>::dmq_contents(T::BrokerId::get().into()).len() as u32;
@@ -140,8 +142,8 @@ mod v_coretime {
 			let new_core_count = assigner_coretime::Pallet::<T>::session_core_count();
 			ensure!(new_core_count == prev_core_count, "Total number of cores need to not change.");
 			ensure!(
-				dmp_queue_size > prev_dmp_queue_size,
-				"There should have been enqueued at least one DMP messages."
+				dmp_queue_size == prev_dmp_queue_size + 1,
+				"There should have been enqueued one DMP message."
 			);
 
 			Ok(())
@@ -150,15 +152,15 @@ mod v_coretime {
 
 	// Migrate to Coretime.
 	//
-	// NOTE: Also migrates `num_cores` config value in configuration::ActiveConfig.
+	// NOTE: Also migrates coretime_cores config value in configuration::ActiveConfig.
 	fn migrate_to_coretime<
 		T: Config,
-		SendXcm: xcm::v4::SendXcm,
+		SendXcm: xcm::v3::SendXcm,
 		LegacyLease: GetLegacyLease<BlockNumberFor<T>>,
 	>() -> Weight {
-		let legacy_paras = paras::Parachains::<T>::get();
+		let legacy_paras = paras::Pallet::<T>::parachains();
 		let legacy_count = legacy_paras.len() as u32;
-		let now = frame_system::Pallet::<T>::block_number();
+		let now = <frame_system::Pallet<T>>::block_number();
 		for (core, para_id) in legacy_paras.into_iter().enumerate() {
 			let r = assigner_coretime::Pallet::<T>::assign_core(
 				CoreIndex(core as u32),
@@ -175,9 +177,9 @@ mod v_coretime {
 			}
 		}
 
-		let config = configuration::ActiveConfig::<T>::get();
-		// num_cores was on_demand_cores until now:
-		for on_demand in 0..config.scheduler_params.num_cores {
+		let config = <configuration::Pallet<T>>::config();
+		// coretime_cores was on_demand_cores until now:
+		for on_demand in 0..config.coretime_cores {
 			let core = CoreIndex(legacy_count.saturating_add(on_demand as _));
 			let r = assigner_coretime::Pallet::<T>::assign_core(
 				core,
@@ -189,9 +191,9 @@ mod v_coretime {
 				log::error!("Creating assignment for existing on-demand core, failed: {:?}", err);
 			}
 		}
-		let total_cores = config.scheduler_params.num_cores + legacy_count;
+		let total_cores = config.coretime_cores + legacy_count;
 		configuration::ActiveConfig::<T>::mutate(|c| {
-			c.scheduler_params.num_cores = total_cores;
+			c.coretime_cores = total_cores;
 		});
 
 		if let Err(err) = migrate_send_assignments_to_coretime_chain::<T, SendXcm, LegacyLease>() {
@@ -200,19 +202,17 @@ mod v_coretime {
 
 		let single_weight = <T as Config>::WeightInfo::assign_core(1);
 		single_weight
-			.saturating_mul(u64::from(
-				legacy_count.saturating_add(config.scheduler_params.num_cores),
-			))
+			.saturating_mul(u64::from(legacy_count.saturating_add(config.coretime_cores)))
 			// Second read from sending assignments to the coretime chain.
 			.saturating_add(T::DbWeight::get().reads_writes(2, 1))
 	}
 
 	fn migrate_send_assignments_to_coretime_chain<
 		T: Config,
-		SendXcm: xcm::v4::SendXcm,
+		SendXcm: xcm::v3::SendXcm,
 		LegacyLease: GetLegacyLease<BlockNumberFor<T>>,
 	>() -> result::Result<(), SendError> {
-		let legacy_paras = paras::Parachains::<T>::get();
+		let legacy_paras = paras::Pallet::<T>::parachains();
 		let legacy_paras_count = legacy_paras.len();
 		let (system_chains, lease_holding): (Vec<_>, Vec<_>) =
 			legacy_paras.into_iter().partition(IsSystem::is_system);
@@ -222,7 +222,7 @@ mod v_coretime {
 				mask: CoreMask::complete(),
 				assignment: CoreAssignment::Task(p.into()),
 			}]);
-			mk_coretime_call::<T>(crate::coretime::CoretimeCalls::Reserve(schedule))
+			mk_coretime_call(crate::coretime::CoretimeCalls::Reserve(schedule))
 		});
 
 		let leases = lease_holding.into_iter().filter_map(|p| {
@@ -238,19 +238,16 @@ mod v_coretime {
 					return None
 				},
 			};
-			// We assume the coretime chain set this parameter to the recommended value in RFC-1:
+			// We assume the coretime chain set this parameter to the recommened value in RFC-1:
 			const TIME_SLICE_PERIOD: u32 = 80;
 			let round_up = if valid_until % TIME_SLICE_PERIOD > 0 { 1 } else { 0 };
 			let time_slice = valid_until / TIME_SLICE_PERIOD + TIME_SLICE_PERIOD * round_up;
 			log::trace!(target: "coretime-migration", "Sending of lease holding para {:?}, valid_until: {:?}, time_slice: {:?}", p, valid_until, time_slice);
-			Some(mk_coretime_call::<T>(crate::coretime::CoretimeCalls::SetLease(p.into(), time_slice)))
+			Some(mk_coretime_call(crate::coretime::CoretimeCalls::SetLease(p.into(), time_slice)))
 		});
 
-		let core_count: u16 = configuration::ActiveConfig::<T>::get()
-			.scheduler_params
-			.num_cores
-			.saturated_into();
-		let set_core_count = iter::once(mk_coretime_call::<T>(
+		let core_count: u16 = configuration::Pallet::<T>::config().coretime_cores.saturated_into();
+		let set_core_count = iter::once(mk_coretime_call(
 			crate::coretime::CoretimeCalls::NotifyCoreCount(core_count),
 		));
 
@@ -261,33 +258,28 @@ mod v_coretime {
 			}]);
 			// Reserved cores will come before lease cores, so cores will change their assignments
 			// when coretime chain sends us their assign_core calls -> Good test.
-			mk_coretime_call::<T>(crate::coretime::CoretimeCalls::Reserve(schedule))
+			mk_coretime_call(crate::coretime::CoretimeCalls::Reserve(schedule))
 		});
 
 		let message_content = iter::once(Instruction::UnpaidExecution {
 			weight_limit: WeightLimit::Unlimited,
 			check_origin: None,
-		});
+		})
+		.chain(reservations)
+		.chain(pool)
+		.chain(leases)
+		.chain(set_core_count)
+		.collect();
 
-		let reservation_content = message_content.clone().chain(reservations).collect();
-		let pool_content = message_content.clone().chain(pool).collect();
-		let leases_content = message_content.clone().chain(leases).collect();
-		let set_core_count_content = message_content.clone().chain(set_core_count).collect();
+		let message = Xcm(message_content);
 
-		let messages = vec![
-			Xcm(reservation_content),
-			Xcm(pool_content),
-			Xcm(leases_content),
-			Xcm(set_core_count_content),
-		];
-
-		for message in messages {
-			send_xcm::<SendXcm>(
-				Location::new(0, Junction::Parachain(T::BrokerId::get())),
-				message,
-			)?;
-		}
-
+		send_xcm::<SendXcm>(
+			MultiLocation {
+				parents: 0,
+				interior: Junctions::X1(Junction::Parachain(T::BrokerId::get())),
+			},
+			message,
+		)?;
 		Ok(())
 	}
 }

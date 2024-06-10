@@ -35,7 +35,7 @@ use std::{
 };
 
 use futures::{channel::oneshot, future::BoxFuture, pin_mut, prelude::*};
-use libp2p::PeerId;
+use libp2p::{build_multiaddr, PeerId};
 use log::trace;
 use parking_lot::Mutex;
 use sc_block_builder::{BlockBuilder, BlockBuilderBuilder};
@@ -57,8 +57,8 @@ use sc_network::{
 	peer_store::PeerStore,
 	request_responses::ProtocolConfig as RequestResponseConfig,
 	types::ProtocolName,
-	NetworkBlock, NetworkService, NetworkStateInfo, NetworkSyncForkRequest, NetworkWorker,
-	NotificationMetrics, NotificationService,
+	Multiaddr, NetworkBlock, NetworkService, NetworkStateInfo, NetworkSyncForkRequest,
+	NetworkWorker, NotificationService,
 };
 use sc_network_common::role::Roles;
 use sc_network_light::light_client_requests::handler::LightClientRequestHandler;
@@ -66,12 +66,11 @@ use sc_network_sync::{
 	block_request_handler::BlockRequestHandler,
 	service::{network::NetworkServiceProvider, syncing_service::SyncingService},
 	state_request_handler::StateRequestHandler,
-	strategy::warp::{
+	warp::{
 		AuthorityList, EncodedProof, SetId, VerificationResult, WarpSyncParams, WarpSyncProvider,
 	},
 	warp_request_handler,
 };
-use sc_network_types::{build_multiaddr, multiaddr::Multiaddr};
 use sc_service::client::Client;
 use sp_blockchain::{
 	Backend as BlockchainBackend, HeaderBackend, Info as BlockchainInfo, Result as ClientResult,
@@ -249,7 +248,7 @@ where
 {
 	/// Get this peer ID.
 	pub fn id(&self) -> PeerId {
-		self.network.service().local_peer_id().into()
+		self.network.service().local_peer_id()
 	}
 
 	/// Returns true if we're major syncing.
@@ -296,11 +295,7 @@ where
 		hash: <Block as BlockT>::Hash,
 		number: NumberFor<Block>,
 	) {
-		self.sync_service.set_sync_fork_request(
-			peers.into_iter().map(From::from).collect(),
-			hash,
-			number,
-		);
+		self.sync_service.set_sync_fork_request(peers, hash, number);
 	}
 
 	/// Add blocks to the peer -- edit the block before adding
@@ -394,12 +389,11 @@ where
 
 			futures::executor::block_on(self.block_import.import_block(import_block))
 				.expect("block_import failed");
+			if announce_block {
+				self.sync_service.announce_block(hash, None);
+			}
 			hashes.push(hash);
 			at = hash;
-		}
-
-		if announce_block {
-			self.sync_service.announce_block(at, None);
 		}
 
 		if inform_sync_about_new_best_block {
@@ -705,8 +699,6 @@ pub struct FullPeerConfig {
 	pub storage_chain: bool,
 	/// Optional target block header to sync to
 	pub target_block: Option<<Block as BlockT>::Header>,
-	/// Force genesis even in case of warp & light state sync.
-	pub force_genesis: bool,
 }
 
 #[async_trait::async_trait]
@@ -766,9 +758,7 @@ pub trait TestNetFactory: Default + Sized + Send {
 			*genesis_extra_storage = storage;
 		}
 
-		if !config.force_genesis &&
-			matches!(config.sync_mode, SyncMode::LightState { .. } | SyncMode::Warp)
-		{
+		if matches!(config.sync_mode, SyncMode::LightState { .. } | SyncMode::Warp) {
 			test_client_builder = test_client_builder.set_no_genesis();
 		}
 		let backend = test_client_builder.backend();
@@ -835,7 +825,7 @@ pub trait TestNetFactory: Default + Sized + Send {
 
 		let (chain_sync_network_provider, chain_sync_network_handle) =
 			NetworkServiceProvider::new();
-		let mut block_relay_params = BlockRequestHandler::new::<NetworkWorker<_, _>>(
+		let mut block_relay_params = BlockRequestHandler::new(
 			chain_sync_network_handle.clone(),
 			&protocol_id,
 			None,
@@ -847,24 +837,18 @@ pub trait TestNetFactory: Default + Sized + Send {
 		}));
 
 		let state_request_protocol_config = {
-			let (handler, protocol_config) = StateRequestHandler::new::<NetworkWorker<_, _>>(
-				&protocol_id,
-				None,
-				client.clone(),
-				50,
-			);
+			let (handler, protocol_config) =
+				StateRequestHandler::new(&protocol_id, None, client.clone(), 50);
 			self.spawn_task(handler.run().boxed());
 			protocol_config
 		};
 
-		let light_client_request_protocol_config =
-			{
-				let (handler, protocol_config) = LightClientRequestHandler::new::<
-					NetworkWorker<_, _>,
-				>(&protocol_id, None, client.clone());
-				self.spawn_task(handler.run().boxed());
-				protocol_config
-			};
+		let light_client_request_protocol_config = {
+			let (handler, protocol_config) =
+				LightClientRequestHandler::new(&protocol_id, None, client.clone());
+			self.spawn_task(handler.run().boxed());
+			protocol_config
+		};
 
 		let warp_sync = Arc::new(TestWarpSyncProvider(client.clone()));
 
@@ -878,45 +862,35 @@ pub trait TestNetFactory: Default + Sized + Send {
 		};
 
 		let warp_protocol_config = {
-			let (handler, protocol_config) =
-				warp_request_handler::RequestHandler::new::<_, NetworkWorker<_, _>>(
-					protocol_id.clone(),
-					client
-						.block_hash(0u32.into())
-						.ok()
-						.flatten()
-						.expect("Genesis block exists; qed"),
-					None,
-					warp_sync.clone(),
-				);
+			let (handler, protocol_config) = warp_request_handler::RequestHandler::new(
+				protocol_id.clone(),
+				client
+					.block_hash(0u32.into())
+					.ok()
+					.flatten()
+					.expect("Genesis block exists; qed"),
+				None,
+				warp_sync.clone(),
+			);
 			self.spawn_task(handler.run().boxed());
 			protocol_config
 		};
 
 		let peer_store = PeerStore::new(
-			network_config
-				.boot_nodes
-				.iter()
-				.map(|bootnode| bootnode.peer_id.into())
-				.collect(),
+			network_config.boot_nodes.iter().map(|bootnode| bootnode.peer_id).collect(),
 		);
-		let peer_store_handle = Arc::new(peer_store.handle());
+		let peer_store_handle = peer_store.handle();
 		self.spawn_task(peer_store.run().boxed());
 
 		let block_announce_validator = config
 			.block_announce_validator
 			.unwrap_or_else(|| Box::new(DefaultBlockAnnounceValidator));
-		let metrics = <NetworkWorker<_, _> as sc_network::NetworkBackend<
-			Block,
-			<Block as BlockT>::Hash,
-		>>::register_notification_metrics(None);
 
 		let (engine, sync_service, block_announce_config) =
 			sc_network_sync::engine::SyncingEngine::new(
 				Roles::from(if config.is_authority { &Role::Authority } else { &Role::Full }),
 				client.clone(),
 				None,
-				metrics,
 				&full_net_config,
 				protocol_id.clone(),
 				&fork_id,
@@ -957,13 +931,12 @@ pub trait TestNetFactory: Default + Sized + Send {
 				tokio::spawn(f);
 			}),
 			network_config: full_net_config,
+			peer_store: peer_store_handle,
 			genesis_hash,
 			protocol_id,
 			fork_id,
 			metrics_registry: None,
 			block_announce_config,
-			bitswap_config: None,
-			notification_metrics: NotificationMetrics::new(None),
 		})
 		.unwrap();
 
@@ -984,10 +957,8 @@ pub trait TestNetFactory: Default + Sized + Send {
 
 		self.mut_peers(move |peers| {
 			for peer in peers.iter_mut() {
-				peer.network.add_known_address(
-					network.service().local_peer_id().into(),
-					listen_addr.clone().into(),
-				);
+				peer.network
+					.add_known_address(network.service().local_peer_id(), listen_addr.clone());
 			}
 
 			let imported_blocks_stream = Box::pin(client.import_notification_stream().fuse());

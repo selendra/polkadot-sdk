@@ -25,13 +25,12 @@ use sc_executor_common::{
 };
 use sc_runtime_test::wasm_binary_unwrap;
 use sp_core::{
-	ed25519, map,
+	blake2_128, blake2_256, ed25519, map,
 	offchain::{testing, OffchainDbExt, OffchainWorkerExt},
 	sr25519,
 	traits::Externalities,
 	Pair,
 };
-use sp_crypto_hashing::{blake2_128, blake2_256, sha2_256, twox_128, twox_256};
 use sp_runtime::traits::BlakeTwo256;
 use sp_state_machine::TestExternalities as CoreTestExternalities;
 use sp_trie::{LayoutV1 as Layout, TrieConfiguration};
@@ -225,12 +224,12 @@ fn blake2_256_should_work(wasm_method: WasmExecutionMethod) {
 	let mut ext = ext.ext();
 	assert_eq!(
 		call_in_wasm("test_blake2_256", &[0], wasm_method, &mut ext,).unwrap(),
-		blake2_256(b"").to_vec().encode(),
+		blake2_256(&b""[..]).to_vec().encode(),
 	);
 	assert_eq!(
 		call_in_wasm("test_blake2_256", &b"Hello world!".to_vec().encode(), wasm_method, &mut ext,)
 			.unwrap(),
-		blake2_256(b"Hello world!").to_vec().encode(),
+		blake2_256(&b"Hello world!"[..]).to_vec().encode(),
 	);
 }
 
@@ -240,12 +239,12 @@ fn blake2_128_should_work(wasm_method: WasmExecutionMethod) {
 	let mut ext = ext.ext();
 	assert_eq!(
 		call_in_wasm("test_blake2_128", &[0], wasm_method, &mut ext,).unwrap(),
-		blake2_128(b"").to_vec().encode(),
+		blake2_128(&b""[..]).to_vec().encode(),
 	);
 	assert_eq!(
 		call_in_wasm("test_blake2_128", &b"Hello world!".to_vec().encode(), wasm_method, &mut ext,)
 			.unwrap(),
-		blake2_128(b"Hello world!").to_vec().encode(),
+		blake2_128(&b"Hello world!"[..]).to_vec().encode(),
 	);
 }
 
@@ -255,12 +254,18 @@ fn sha2_256_should_work(wasm_method: WasmExecutionMethod) {
 	let mut ext = ext.ext();
 	assert_eq!(
 		call_in_wasm("test_sha2_256", &[0], wasm_method, &mut ext,).unwrap(),
-		sha2_256(b"").to_vec().encode(),
+		array_bytes::hex2bytes_unchecked(
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		)
+		.encode(),
 	);
 	assert_eq!(
 		call_in_wasm("test_sha2_256", &b"Hello world!".to_vec().encode(), wasm_method, &mut ext,)
 			.unwrap(),
-		sha2_256(b"Hello world!").to_vec().encode(),
+		array_bytes::hex2bytes_unchecked(
+			"c0535e4be2b79ffd93291305436bf889314e4a3faec05ecffcbb7df31ad9e51a"
+		)
+		.encode(),
 	);
 }
 
@@ -270,12 +275,18 @@ fn twox_256_should_work(wasm_method: WasmExecutionMethod) {
 	let mut ext = ext.ext();
 	assert_eq!(
 		call_in_wasm("test_twox_256", &[0], wasm_method, &mut ext,).unwrap(),
-		twox_256(b"").to_vec().encode()
+		array_bytes::hex2bytes_unchecked(
+			"99e9d85137db46ef4bbea33613baafd56f963c64b1f3685a4eb4abd67ff6203a"
+		)
+		.encode(),
 	);
 	assert_eq!(
 		call_in_wasm("test_twox_256", &b"Hello world!".to_vec().encode(), wasm_method, &mut ext,)
 			.unwrap(),
-		twox_256(b"Hello world!").to_vec().encode()
+		array_bytes::hex2bytes_unchecked(
+			"b27dfd7f223f177f2a13647b533599af0c07f68bda23d96d059da2b451a35a74"
+		)
+		.encode(),
 	);
 }
 
@@ -285,12 +296,12 @@ fn twox_128_should_work(wasm_method: WasmExecutionMethod) {
 	let mut ext = ext.ext();
 	assert_eq!(
 		call_in_wasm("test_twox_128", &[0], wasm_method, &mut ext,).unwrap(),
-		twox_128(b"").to_vec().encode()
+		array_bytes::hex2bytes_unchecked("99e9d85137db46ef4bbea33613baafd5").encode(),
 	);
 	assert_eq!(
 		call_in_wasm("test_twox_128", &b"Hello world!".to_vec().encode(), wasm_method, &mut ext,)
 			.unwrap(),
-		twox_128(b"Hello world!").to_vec().encode()
+		array_bytes::hex2bytes_unchecked("b27dfd7f223f177f2a13647b533599af").encode(),
 	);
 }
 

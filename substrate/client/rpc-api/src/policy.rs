@@ -21,7 +21,13 @@
 //! Contains a `DenyUnsafe` type that can be used to deny potentially unsafe
 //! RPC when accessed externally.
 
-use jsonrpsee::types::{error::ErrorCode, ErrorObject, ErrorObjectOwned};
+use jsonrpsee::{
+	core::Error as JsonRpseeError,
+	types::{
+		error::{CallError, ErrorCode},
+		ErrorObject,
+	},
+};
 
 /// Signifies whether a potentially unsafe RPC should be denied.
 #[derive(Clone, Copy, Debug)]
@@ -55,8 +61,18 @@ impl std::fmt::Display for UnsafeRpcError {
 
 impl std::error::Error for UnsafeRpcError {}
 
-impl From<UnsafeRpcError> for ErrorObjectOwned {
-	fn from(e: UnsafeRpcError) -> ErrorObjectOwned {
-		ErrorObject::owned(ErrorCode::MethodNotFound.code(), e.to_string(), None::<()>)
+impl From<UnsafeRpcError> for CallError {
+	fn from(e: UnsafeRpcError) -> CallError {
+		CallError::Custom(ErrorObject::owned(
+			ErrorCode::MethodNotFound.code(),
+			e.to_string(),
+			None::<()>,
+		))
+	}
+}
+
+impl From<UnsafeRpcError> for JsonRpseeError {
+	fn from(e: UnsafeRpcError) -> JsonRpseeError {
+		JsonRpseeError::Call(e.into())
 	}
 }

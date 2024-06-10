@@ -31,7 +31,7 @@ frame_support::construct_runtime!(
 
 /// Using a default config for [`frame_system`] in tests. See `default-config` example for more
 /// details.
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
 	type Block = Block;
 }

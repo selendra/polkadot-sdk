@@ -16,8 +16,6 @@
 // limitations under the License.
 
 //! `Inspect` and `Mutate` traits for working with regular balances.
-//!
-//! See the [`crate::traits::fungibles`] doc for more information about fungibles traits.
 
 use sp_std::marker::PhantomData;
 
@@ -196,10 +194,9 @@ pub trait Unbalanced<AccountId>: Inspect<AccountId> {
 		force: Fortitude,
 	) -> Result<Self::Balance, DispatchError> {
 		let old_balance = Self::balance(asset.clone(), who);
-		let reducible = Self::reducible_balance(asset.clone(), who, preservation, force);
-		match precision {
-			BestEffort => amount = amount.min(reducible),
-			Exact => ensure!(reducible >= amount, TokenError::FundsUnavailable),
+		let free = Self::reducible_balance(asset.clone(), who, preservation, force);
+		if let BestEffort = precision {
+			amount = amount.min(free);
 		}
 		let new_balance = old_balance.checked_sub(&amount).ok_or(TokenError::FundsUnavailable)?;
 		if let Some(dust) = Self::write_balance(asset.clone(), who, new_balance)? {
@@ -283,17 +280,16 @@ where
 		asset: Self::AssetId,
 		who: &AccountId,
 		amount: Self::Balance,
-		preservation: Preservation,
 		precision: Precision,
 		force: Fortitude,
 	) -> Result<Self::Balance, DispatchError> {
-		let actual = Self::reducible_balance(asset.clone(), who, preservation, force).min(amount);
+		let actual = Self::reducible_balance(asset.clone(), who, Expendable, force).min(amount);
 		ensure!(actual == amount || precision == BestEffort, TokenError::FundsUnavailable);
 		Self::total_issuance(asset.clone())
 			.checked_sub(&actual)
 			.ok_or(ArithmeticError::Overflow)?;
 		let actual =
-			Self::decrease_balance(asset.clone(), who, actual, BestEffort, preservation, force)?;
+			Self::decrease_balance(asset.clone(), who, actual, BestEffort, Expendable, force)?;
 		Self::set_total_issuance(
 			asset.clone(),
 			Self::total_issuance(asset.clone()).saturating_sub(actual),
@@ -393,8 +389,7 @@ where
 	fn set_balance(asset: Self::AssetId, who: &AccountId, amount: Self::Balance) -> Self::Balance {
 		let b = Self::balance(asset.clone(), who);
 		if b > amount {
-			Self::burn_from(asset, who, b - amount, Expendable, BestEffort, Force)
-				.map(|d| b.saturating_sub(d))
+			Self::burn_from(asset, who, b - amount, BestEffort, Force).map(|d| b.saturating_sub(d))
 		} else {
 			Self::mint_into(asset, who, amount - b).map(|d| b.saturating_add(d))
 		}
@@ -483,24 +478,11 @@ pub trait Balanced<AccountId>: Inspect<AccountId> + Unbalanced<AccountId> {
 	///
 	/// This is just the same as burning and issuing the same amount and has no effect on the
 	/// total issuance.
-	///
-	/// This is infallible, but doesn't guarantee that the entire `amount` is used to create the
-	/// pair, for example in the case where the amounts would cause overflow or underflow in
-	/// [`Balanced::issue`] or [`Balanced::rescind`].
 	fn pair(
 		asset: Self::AssetId,
 		amount: Self::Balance,
-	) -> Result<(Debt<AccountId, Self>, Credit<AccountId, Self>), DispatchError> {
-		let issued = Self::issue(asset.clone(), amount);
-		let rescinded = Self::rescind(asset, amount);
-		// Need to check amount in case by some edge case both issued and rescinded are below
-		// `amount` by the exact same value
-		if issued.peek() != rescinded.peek() || issued.peek() != amount {
-			// Issued and rescinded will be dropped automatically
-			Err("Failed to issue and rescind equal amounts".into())
-		} else {
-			Ok((rescinded, issued))
-		}
+	) -> (Debt<AccountId, Self>, Credit<AccountId, Self>) {
+		(Self::rescind(asset.clone(), amount), Self::issue(asset, amount))
 	}
 
 	/// Mints `value` into the account of `who`, creating it as needed.

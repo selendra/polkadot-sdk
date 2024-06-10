@@ -64,8 +64,6 @@ pub enum MessageSendError {
 	TooBig,
 	/// Some other error.
 	Other,
-	/// There are too many channels open at once.
-	TooManyChannels,
 }
 
 impl From<MessageSendError> for &'static str {
@@ -76,7 +74,6 @@ impl From<MessageSendError> for &'static str {
 			NoChannel => "NoChannel",
 			TooBig => "TooBig",
 			Other => "Other",
-			TooManyChannels => "TooManyChannels",
 		}
 	}
 }
@@ -96,12 +93,13 @@ pub enum AggregateMessageOrigin {
 	Sibling(ParaId),
 }
 
-impl From<AggregateMessageOrigin> for Location {
+impl From<AggregateMessageOrigin> for xcm::v3::MultiLocation {
 	fn from(origin: AggregateMessageOrigin) -> Self {
 		match origin {
-			AggregateMessageOrigin::Here => Location::here(),
-			AggregateMessageOrigin::Parent => Location::parent(),
-			AggregateMessageOrigin::Sibling(id) => Location::new(1, Junction::Parachain(id.into())),
+			AggregateMessageOrigin::Here => MultiLocation::here(),
+			AggregateMessageOrigin::Parent => MultiLocation::parent(),
+			AggregateMessageOrigin::Sibling(id) =>
+				MultiLocation::new(1, Junction::Parachain(id.into())),
 		}
 	}
 }
@@ -136,11 +134,6 @@ pub struct ChannelInfo {
 pub trait GetChannelInfo {
 	fn get_channel_status(id: ParaId) -> ChannelStatus;
 	fn get_channel_info(id: ParaId) -> Option<ChannelInfo>;
-}
-
-/// List all open outgoing channels.
-pub trait ListChannelInfos {
-	fn outgoing_channels() -> Vec<ParaId>;
 }
 
 /// Something that should be called when sending an upward message.

@@ -121,11 +121,9 @@ fn collect_entries(contracts_dir: &Path, out_dir: &Path) -> Vec<Entry> {
 /// Create a `Cargo.toml` to compile the given contract entries.
 fn create_cargo_toml<'a>(
 	fixtures_dir: &Path,
-	root_cargo_toml: &Path,
 	entries: impl Iterator<Item = &'a Entry>,
 	output_dir: &Path,
 ) -> Result<()> {
-	let root_toml: toml::Value = toml::from_str(&fs::read_to_string(root_cargo_toml)?)?;
 	let mut cargo_toml: toml::Value = toml::from_str(include_str!("./build/Cargo.toml"))?;
 	let mut set_dep = |name, path| -> Result<()> {
 		cargo_toml["dependencies"][name]["path"] = toml::Value::String(
@@ -135,8 +133,6 @@ fn create_cargo_toml<'a>(
 	};
 	set_dep("uapi", "../uapi")?;
 	set_dep("common", "./contracts/common")?;
-	cargo_toml["dependencies"]["polkavm-derive"]["version"] =
-		root_toml["workspace"]["dependencies"]["polkavm-derive"].clone();
 
 	cargo_toml["bin"] = toml::Value::Array(
 		entries
@@ -163,7 +159,7 @@ fn invoke_cargo_fmt<'a>(
 ) -> Result<()> {
 	// If rustfmt is not installed, skip the check.
 	if !Command::new("rustup")
-		.args(["nightly-2024-04-10", "run", "rustfmt", "--version"])
+		.args(["run", "nightly", "rustfmt", "--version"])
 		.output()
 		.map_or(false, |o| o.status.success())
 	{
@@ -171,7 +167,7 @@ fn invoke_cargo_fmt<'a>(
 	}
 
 	let fmt_res = Command::new("rustup")
-		.args(["nightly-2024-04-10", "run", "rustfmt", "--check", "--config-path"])
+		.args(["run", "nightly", "rustfmt", "--check", "--config-path"])
 		.arg(config_path)
 		.args(files)
 		.output()
@@ -186,7 +182,7 @@ fn invoke_cargo_fmt<'a>(
 	eprintln!("{}\n{}", stdout, stderr);
 	eprintln!(
 		"Fixtures files are not formatted.\n
-		Please run `rustup nightly-2024-04-10 run rustfmt --config-path {} {}/*.rs`",
+		Please run `rustup run nightly rustfmt --config-path {} {}/*.rs`",
 		config_path.display(),
 		contract_dir.display()
 	);
@@ -207,7 +203,6 @@ fn invoke_wasm_build(current_dir: &Path) -> Result<()> {
 
 	let build_res = Command::new(env::var("CARGO")?)
 		.current_dir(current_dir)
-		.env("CARGO_TARGET_DIR", current_dir.join("target").display().to_string())
 		.env("CARGO_ENCODED_RUSTFLAGS", encoded_rustflags)
 		.args(["build", "--release", "--target=wasm32-unknown-unknown"])
 		.output()
@@ -239,12 +234,11 @@ fn post_process_wasm(input_path: &Path, output_path: &Path) -> Result<()> {
 /// Build contracts for RISC-V.
 #[cfg(feature = "riscv")]
 fn invoke_riscv_build(current_dir: &Path) -> Result<()> {
-	let encoded_rustflags = [
-		"-Crelocation-model=pie",
-		"-Clink-arg=--emit-relocs",
-		"-Clink-arg=--export-dynamic-symbol=__polkavm_symbol_export_hack__*",
-	]
-	.join("\x1f");
+	let encoded_rustflags =
+		["-Crelocation-model=pie", "-Clink-arg=--emit-relocs", "-Clink-arg=-Tmemory.ld"]
+			.join("\x1f");
+
+	fs::write(current_dir.join("memory.ld"), include_bytes!("./build/riscv_memory_layout.ld"))?;
 
 	let build_res = Command::new(env::var("CARGO")?)
 		.current_dir(current_dir)
@@ -253,7 +247,7 @@ fn invoke_riscv_build(current_dir: &Path) -> Result<()> {
 		.env("CARGO_ENCODED_RUSTFLAGS", encoded_rustflags)
 		.env("RUSTUP_TOOLCHAIN", "rve-nightly")
 		.env("RUSTUP_HOME", env::var("RUSTUP_HOME").unwrap_or_default())
-		.args(["build", "--release", "--target=riscv32ema-unknown-none-elf"])
+		.args(["build", "--release", "--target=riscv32em-unknown-none-elf"])
 		.output()
 		.expect("failed to execute process");
 
@@ -294,7 +288,7 @@ fn write_output(build_dir: &Path, out_dir: &Path, entries: Vec<Entry>) -> Result
 
 		#[cfg(feature = "riscv")]
 		post_process_riscv(
-			&build_dir.join("target/riscv32ema-unknown-none-elf/release").join(entry.name()),
+			&build_dir.join("target/riscv32em-unknown-none-elf/release").join(entry.name()),
 			&out_dir.join(entry.out_riscv_filename()),
 		)?;
 
@@ -313,7 +307,7 @@ fn find_workspace_root(current_dir: &Path) -> Option<PathBuf> {
 			let cargo_toml_contents =
 				std::fs::read_to_string(current_dir.join("Cargo.toml")).ok()?;
 			if cargo_toml_contents.contains("[workspace]") {
-				return Some(current_dir);
+				return Some(current_dir)
 			}
 		}
 
@@ -328,7 +322,6 @@ fn main() -> Result<()> {
 	let contracts_dir = fixtures_dir.join("contracts");
 	let out_dir: PathBuf = env::var("OUT_DIR")?.into();
 	let workspace_root = find_workspace_root(&fixtures_dir).expect("workspace root exists; qed");
-	let root_cargo_toml = workspace_root.join("Cargo.toml");
 
 	let entries = collect_entries(&contracts_dir, &out_dir);
 	if entries.is_empty() {
@@ -338,7 +331,7 @@ fn main() -> Result<()> {
 	let tmp_dir = tempfile::tempdir()?;
 	let tmp_dir_path = tmp_dir.path();
 
-	create_cargo_toml(&fixtures_dir, &root_cargo_toml, entries.iter(), tmp_dir.path())?;
+	create_cargo_toml(&fixtures_dir, entries.iter(), tmp_dir.path())?;
 	invoke_cargo_fmt(
 		&workspace_root.join(".rustfmt.toml"),
 		entries.iter().map(|entry| &entry.path as _),

@@ -30,13 +30,12 @@ use std::{
 	hash::Hash,
 };
 
-use polkadot_primitives::{
+use primitives::{
 	effective_minimum_backing_votes, ValidatorSignature,
 	ValidityAttestation as PrimitiveValidityAttestation,
 };
 
-use codec::{Decode, Encode};
-const LOG_TARGET: &str = "parachain::statement-table";
+use parity_scale_codec::{Decode, Encode};
 
 /// Context for the statement table.
 pub trait Context {
@@ -53,6 +52,9 @@ pub trait Context {
 
 	/// get the digest of a candidate.
 	fn candidate_digest(candidate: &Self::Candidate) -> Self::Digest;
+
+	/// get the group of a candidate.
+	fn candidate_group(candidate: &Self::Candidate) -> Self::GroupId;
 
 	/// Whether a authority is a member of a group.
 	/// Members are meant to submit candidates and vote on validity.
@@ -340,13 +342,13 @@ impl<Ctx: Context> Table<Ctx> {
 	pub fn import_statement(
 		&mut self,
 		context: &Ctx,
-		group_id: Ctx::GroupId,
 		statement: SignedStatement<Ctx::Candidate, Ctx::Digest, Ctx::AuthorityId, Ctx::Signature>,
 	) -> Option<Summary<Ctx::Digest, Ctx::GroupId>> {
 		let SignedStatement { statement, signature, sender: signer } = statement;
+
 		let res = match statement {
 			Statement::Seconded(candidate) =>
-				self.import_candidate(context, signer.clone(), candidate, signature, group_id),
+				self.import_candidate(context, signer.clone(), candidate, signature),
 			Statement::Valid(digest) =>
 				self.validity_vote(context, signer.clone(), digest, ValidityVote::Valid(signature)),
 		};
@@ -385,10 +387,9 @@ impl<Ctx: Context> Table<Ctx> {
 		authority: Ctx::AuthorityId,
 		candidate: Ctx::Candidate,
 		signature: Ctx::Signature,
-		group: Ctx::GroupId,
 	) -> ImportResult<Ctx> {
+		let group = Ctx::candidate_group(&candidate);
 		if !context.is_member_of(&authority, &group) {
-			gum::debug!(target: LOG_TARGET,  authority = ?authority, group = ?group, "New `Misbehavior::UnauthorizedStatement`, candidate backed by validator that doesn't belong to expected group" );
 			return Err(Misbehavior::UnauthorizedStatement(UnauthorizedStatement {
 				statement: SignedStatement {
 					signature,
@@ -633,6 +634,10 @@ mod tests {
 			Digest(candidate.1)
 		}
 
+		fn candidate_group(candidate: &Candidate) -> GroupId {
+			GroupId(candidate.0)
+		}
+
 		fn is_member_of(&self, authority: &AuthorityId, group: &GroupId) -> bool {
 			self.authorities.get(authority).map(|v| v == group).unwrap_or(false)
 		}
@@ -670,10 +675,10 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), statement_a);
+		table.import_statement(&context, statement_a);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 
-		table.import_statement(&context, GroupId(2), statement_b);
+		table.import_statement(&context, statement_b);
 		assert_eq!(
 			table.detected_misbehavior[&AuthorityId(1)][0],
 			Misbehavior::MultipleCandidates(MultipleCandidates {
@@ -706,10 +711,10 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), statement_a);
+		table.import_statement(&context, statement_a);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 
-		table.import_statement(&context, GroupId(2), statement_b);
+		table.import_statement(&context, statement_b);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 	}
 
@@ -730,7 +735,7 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), statement);
+		table.import_statement(&context, statement);
 
 		assert_eq!(
 			table.detected_misbehavior[&AuthorityId(1)][0],
@@ -764,7 +769,7 @@ mod tests {
 		};
 		let candidate_a_digest = Digest(100);
 
-		table.import_statement(&context, GroupId(2), candidate_a);
+		table.import_statement(&context, candidate_a);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(2)));
 
@@ -774,7 +779,7 @@ mod tests {
 			signature: Signature(2),
 			sender: AuthorityId(2),
 		};
-		table.import_statement(&context, GroupId(3), bad_validity_vote);
+		table.import_statement(&context, bad_validity_vote);
 
 		assert_eq!(
 			table.detected_misbehavior[&AuthorityId(2)][0],
@@ -806,7 +811,7 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), statement);
+		table.import_statement(&context, statement);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 
 		let invalid_statement = SignedStatement {
@@ -815,7 +820,7 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), invalid_statement);
+		table.import_statement(&context, invalid_statement);
 		assert!(table.detected_misbehavior.contains_key(&AuthorityId(1)));
 	}
 
@@ -837,7 +842,7 @@ mod tests {
 		};
 		let candidate_digest = Digest(100);
 
-		table.import_statement(&context, GroupId(2), statement);
+		table.import_statement(&context, statement);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 
 		let extra_vote = SignedStatement {
@@ -846,7 +851,7 @@ mod tests {
 			sender: AuthorityId(1),
 		};
 
-		table.import_statement(&context, GroupId(2), extra_vote);
+		table.import_statement(&context, extra_vote);
 		assert_eq!(
 			table.detected_misbehavior[&AuthorityId(1)][0],
 			Misbehavior::ValidityDoubleVote(ValidityDoubleVote::IssuedAndValidity(
@@ -905,7 +910,7 @@ mod tests {
 		};
 		let candidate_digest = Digest(100);
 
-		table.import_statement(&context, GroupId(2), statement);
+		table.import_statement(&context, statement);
 
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 		assert!(table.attested_candidate(&candidate_digest, &context, 2).is_none());
@@ -916,7 +921,7 @@ mod tests {
 			sender: AuthorityId(2),
 		};
 
-		table.import_statement(&context, GroupId(2), vote);
+		table.import_statement(&context, vote);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(2)));
 		assert!(table.attested_candidate(&candidate_digest, &context, 2).is_some());
 	}
@@ -939,7 +944,7 @@ mod tests {
 		};
 
 		let summary = table
-			.import_statement(&context, GroupId(2), statement)
+			.import_statement(&context, statement)
 			.expect("candidate import to give summary");
 
 		assert_eq!(summary.candidate, Digest(100));
@@ -966,7 +971,7 @@ mod tests {
 		};
 		let candidate_digest = Digest(100);
 
-		table.import_statement(&context, GroupId(2), statement);
+		table.import_statement(&context, statement);
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(1)));
 
 		let vote = SignedStatement {
@@ -975,9 +980,8 @@ mod tests {
 			sender: AuthorityId(2),
 		};
 
-		let summary = table
-			.import_statement(&context, GroupId(2), vote)
-			.expect("candidate vote to give summary");
+		let summary =
+			table.import_statement(&context, vote).expect("candidate vote to give summary");
 
 		assert!(!table.detected_misbehavior.contains_key(&AuthorityId(2)));
 

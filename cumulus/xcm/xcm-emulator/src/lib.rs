@@ -34,14 +34,11 @@ pub use frame_support::{
 	},
 	weights::{Weight, WeightMeter},
 };
-pub use frame_system::{
-	pallet_prelude::BlockNumberFor, Config as SystemConfig, Pallet as SystemPallet,
-};
+pub use frame_system::{Config as SystemConfig, Pallet as SystemPallet};
 pub use pallet_balances::AccountData;
 pub use pallet_message_queue;
 pub use sp_arithmetic::traits::Bounded;
-pub use sp_core::{parameter_types, sr25519, storage::Storage, Pair};
-pub use sp_crypto_hashing::blake2_256;
+pub use sp_core::{blake2_256, parameter_types, sr25519, storage::Storage, Pair};
 pub use sp_io::TestExternalities;
 pub use sp_runtime::BoundedSlice;
 pub use sp_std::{cell::RefCell, collections::vec_deque::VecDeque, fmt::Debug};
@@ -56,16 +53,19 @@ pub use cumulus_primitives_core::{
 pub use cumulus_primitives_parachain_inherent::ParachainInherentData;
 pub use cumulus_test_relay_sproof_builder::RelayStateSproofBuilder;
 pub use pallet_message_queue::{Config as MessageQueueConfig, Pallet as MessageQueuePallet};
-pub use parachains_common::{AccountId, Balance};
+pub use parachains_common::{AccountId, Balance, BlockNumber};
 pub use polkadot_primitives;
 pub use polkadot_runtime_parachains::inclusion::{AggregateMessageOrigin, UmpQueueId};
 
 // Polkadot
 pub use polkadot_parachain_primitives::primitives::RelayChainBlockNumber;
 use sp_core::crypto::AccountId32;
-pub use xcm::latest::prelude::{
-	AccountId32 as AccountId32Junction, Ancestor, Assets, Here, Location,
-	Parachain as ParachainJunction, Parent, WeightLimit, XcmHash,
+pub use xcm::{
+	prelude::{AccountId32 as AccountId32Junction, Here},
+	v3::prelude::{
+		Ancestor, MultiAssets, MultiLocation, Parachain as ParachainJunction, Parent, WeightLimit,
+		XcmHash, X1,
+	},
 };
 pub use xcm_executor::traits::ConvertLocation;
 
@@ -215,7 +215,6 @@ pub trait Chain: TestExt {
 	type RuntimeOrigin;
 	type RuntimeEvent;
 	type System;
-	type OriginCaller;
 
 	fn account_id_of(seed: &str) -> AccountId {
 		helpers::get_account_id_from_seed::<sr25519::Public>(seed)
@@ -232,11 +231,11 @@ pub trait RelayChain: Chain {
 
 	fn init();
 
-	fn child_location_of(id: ParaId) -> Location {
+	fn child_location_of(id: ParaId) -> MultiLocation {
 		(Ancestor(0), ParachainJunction(id.into())).into()
 	}
 
-	fn sovereign_account_id_of(location: Location) -> AccountIdOf<Self::Runtime> {
+	fn sovereign_account_id_of(location: MultiLocation) -> AccountIdOf<Self::Runtime> {
 		Self::SovereignAccountOf::convert_location(&location).unwrap()
 	}
 
@@ -264,15 +263,15 @@ pub trait Parachain: Chain {
 		Self::ext_wrapper(|| Self::ParachainInfo::get())
 	}
 
-	fn parent_location() -> Location {
+	fn parent_location() -> MultiLocation {
 		(Parent).into()
 	}
 
-	fn sibling_location_of(para_id: ParaId) -> Location {
-		(Parent, ParachainJunction(para_id.into())).into()
+	fn sibling_location_of(para_id: ParaId) -> MultiLocation {
+		(Parent, X1(ParachainJunction(para_id.into()))).into()
 	}
 
-	fn sovereign_account_id_of(location: Location) -> AccountIdOf<Self::Runtime> {
+	fn sovereign_account_id_of(location: MultiLocation) -> AccountIdOf<Self::Runtime> {
 		Self::LocationToAccountId::convert_location(&location).unwrap()
 	}
 }
@@ -367,7 +366,6 @@ macro_rules! decl_test_relay_chains {
 				type RuntimeOrigin = $runtime::RuntimeOrigin;
 				type RuntimeEvent = $runtime::RuntimeEvent;
 				type System = $crate::SystemPallet::<Self::Runtime>;
-				type OriginCaller = $runtime::OriginCaller;
 
 				fn account_data_of(account: $crate::AccountIdOf<Self::Runtime>) -> $crate::AccountData<$crate::Balance> {
 					<Self as $crate::TestExt>::ext_wrapper(|| $crate::SystemPallet::<Self::Runtime>::account(account).data.into())
@@ -602,7 +600,6 @@ macro_rules! decl_test_parachains {
 				type RuntimeOrigin = $runtime::RuntimeOrigin;
 				type RuntimeEvent = $runtime::RuntimeEvent;
 				type System = $crate::SystemPallet::<Self::Runtime>;
-				type OriginCaller = $runtime::OriginCaller;
 				type Network = N;
 
 				fn account_data_of(account: $crate::AccountIdOf<Self::Runtime>) -> $crate::AccountData<$crate::Balance> {
@@ -662,7 +659,7 @@ macro_rules! decl_test_parachains {
 							.clone()
 						);
 						<Self as Chain>::System::initialize(&block_number, &parent_head_data.hash(), &Default::default());
-						<<Self as Parachain>::ParachainSystem as Hooks<$crate::BlockNumberFor<Self::Runtime>>>::on_initialize(block_number);
+						<<Self as Parachain>::ParachainSystem as Hooks<$crate::BlockNumber>>::on_initialize(block_number);
 
 						let _ = <Self as Parachain>::ParachainSystem::set_validation_data(
 							<Self as Chain>::RuntimeOrigin::none(),
@@ -1435,10 +1432,10 @@ pub struct TestAccount<R: Chain> {
 /// Default `Args` provided by xcm-emulator to be stored in a `Test` instance
 #[derive(Clone)]
 pub struct TestArgs {
-	pub dest: Location,
-	pub beneficiary: Location,
+	pub dest: MultiLocation,
+	pub beneficiary: MultiLocation,
 	pub amount: Balance,
-	pub assets: Assets,
+	pub assets: MultiAssets,
 	pub asset_id: Option<u32>,
 	pub fee_asset_item: u32,
 	pub weight_limit: WeightLimit,
@@ -1446,7 +1443,7 @@ pub struct TestArgs {
 
 impl TestArgs {
 	/// Returns a [`TestArgs`] instance to be used for the Relay Chain across integration tests.
-	pub fn new_relay(dest: Location, beneficiary_id: AccountId32, amount: Balance) -> Self {
+	pub fn new_relay(dest: MultiLocation, beneficiary_id: AccountId32, amount: Balance) -> Self {
 		Self {
 			dest,
 			beneficiary: AccountId32Junction { network: None, id: beneficiary_id.into() }.into(),
@@ -1460,10 +1457,10 @@ impl TestArgs {
 
 	/// Returns a [`TestArgs`] instance to be used for parachains across integration tests.
 	pub fn new_para(
-		dest: Location,
+		dest: MultiLocation,
 		beneficiary_id: AccountId32,
 		amount: Balance,
-		assets: Assets,
+		assets: MultiAssets,
 		asset_id: Option<u32>,
 		fee_asset_item: u32,
 	) -> Self {

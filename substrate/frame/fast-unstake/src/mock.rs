@@ -23,7 +23,10 @@ use frame_support::{
 	traits::{ConstU64, Currency},
 	weights::constants::WEIGHT_REF_TIME_PER_SECOND,
 };
-use sp_runtime::{traits::IdentityLookup, BuildStorage};
+use sp_runtime::{
+	traits::{Convert, IdentityLookup},
+	BuildStorage,
+};
 
 use pallet_staking::{Exposure, IndividualExposure, StakerStatus};
 use sp_std::prelude::*;
@@ -40,7 +43,7 @@ parameter_types! {
 		);
 }
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
 	type Block = Block;
 	type AccountData = pallet_balances::AccountData<Balance>;
@@ -74,6 +77,7 @@ impl pallet_balances::Config for Runtime {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type MaxHolds = ();
 }
 
 pallet_staking_reward_curve::build! {
@@ -131,6 +135,7 @@ impl pallet_staking::Config for Runtime {
 	type NextNewSession = ();
 	type HistoryDepth = ConstU32<84>;
 	type MaxExposurePageSize = ConstU32<64>;
+	type OffendingValidatorsThreshold = ();
 	type ElectionProvider = MockElection;
 	type GenesisElectionProvider = Self::ElectionProvider;
 	type VoterList = pallet_staking::UseNominatorsAndValidatorsMap<Self>;
@@ -141,7 +146,20 @@ impl pallet_staking::Config for Runtime {
 	type EventListeners = ();
 	type BenchmarkingConfig = pallet_staking::TestBenchmarkingConfig;
 	type WeightInfo = ();
-	type DisablingStrategy = pallet_staking::UpToLimitDisablingStrategy;
+}
+
+pub struct BalanceToU256;
+impl Convert<Balance, sp_core::U256> for BalanceToU256 {
+	fn convert(n: Balance) -> sp_core::U256 {
+		n.into()
+	}
+}
+
+pub struct U256ToBalance;
+impl Convert<sp_core::U256, Balance> for U256ToBalance {
+	fn convert(n: sp_core::U256) -> Balance {
+		n.try_into().unwrap()
+	}
 }
 
 parameter_types! {
@@ -163,7 +181,7 @@ impl fast_unstake::Config for Runtime {
 type Block = frame_system::mocking::MockBlock<Runtime>;
 
 frame_support::construct_runtime!(
-	pub enum Runtime {
+	pub struct Runtime {
 		System: frame_system,
 		Timestamp: pallet_timestamp,
 		Balances: pallet_balances,

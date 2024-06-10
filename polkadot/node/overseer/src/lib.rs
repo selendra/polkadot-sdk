@@ -71,8 +71,8 @@ use std::{
 
 use futures::{channel::oneshot, future::BoxFuture, select, Future, FutureExt, StreamExt};
 
+use client::{BlockImportNotification, BlockchainEvents, FinalityNotification};
 use polkadot_primitives::{Block, BlockNumber, Hash};
-use sc_client_api::{BlockImportNotification, BlockchainEvents, FinalityNotification};
 
 use self::messages::{BitfieldSigningMessage, PvfCheckerMessage};
 use polkadot_node_subsystem_types::messages::{
@@ -465,7 +465,7 @@ pub async fn forward_events<P: BlockchainEvents<Block>>(client: Arc<P>, mut hand
 	message_capacity=2048,
 )]
 pub struct Overseer<SupportsParachains> {
-	#[subsystem(blocking, CandidateValidationMessage, sends: [
+	#[subsystem(CandidateValidationMessage, sends: [
 		RuntimeApiMessage,
 	])]
 	candidate_validation: CandidateValidation,
@@ -871,7 +871,7 @@ where
 			gum::trace!(
 				target: LOG_TARGET,
 				relay_parent = ?hash,
-				"Leaf got activated, notifying external listeners"
+				"Leaf got activated, notifying exterinal listeners"
 			);
 			for listener in listeners {
 				// it's fine if the listener is no longer interested

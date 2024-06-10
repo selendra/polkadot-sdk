@@ -18,24 +18,14 @@
 
 use chain_spec_builder::{
 	generate_chain_spec_for_runtime, ChainSpecBuilder, ChainSpecBuilderCmd, ConvertToRawCmd,
-	DisplayPresetCmd, ListPresetsCmd, UpdateCodeCmd, VerifyCmd,
+	UpdateCodeCmd, VerifyCmd,
 };
 use clap::Parser;
-use sc_chain_spec::{
-	update_code_in_json_chain_spec, GenericChainSpec, GenesisConfigBuilderRuntimeCaller,
-};
+use sc_chain_spec::{update_code_in_json_chain_spec, GenericChainSpec};
 use staging_chain_spec_builder as chain_spec_builder;
 use std::fs;
 
-//avoid error message escaping
-fn main() {
-	match inner_main() {
-		Err(e) => eprintln!("{}", format!("{e}")),
-		_ => {},
-	}
-}
-
-fn inner_main() -> Result<(), String> {
+fn main() -> Result<(), String> {
 	sp_tracing::try_init_simple();
 
 	let builder = ChainSpecBuilder::parse();
@@ -80,36 +70,6 @@ fn inner_main() -> Result<(), String> {
 			let chain_spec = GenericChainSpec::<()>::from_json_file(input_chain_spec.clone())?;
 			let _ = serde_json::from_str::<serde_json::Value>(&chain_spec.as_json(true)?)
 				.map_err(|e| format!("Conversion to json failed: {e}"))?;
-		},
-		ChainSpecBuilderCmd::ListPresets(ListPresetsCmd { runtime_wasm_path }) => {
-			let code = fs::read(runtime_wasm_path.as_path())
-				.map_err(|e| format!("wasm blob shall be readable {e}"))?;
-			let caller: GenesisConfigBuilderRuntimeCaller =
-				GenesisConfigBuilderRuntimeCaller::new(&code[..]);
-			let presets = caller
-				.preset_names()
-				.map_err(|e| format!("getting default config from runtime should work: {e}"))?;
-			let presets: Vec<String> = presets
-				.into_iter()
-				.map(|preset| {
-					String::from(
-						TryInto::<&str>::try_into(&preset)
-							.unwrap_or_else(|_| "cannot display preset id")
-							.to_string(),
-					)
-				})
-				.collect();
-			println!("{}", serde_json::json!({"presets":presets}).to_string());
-		},
-		ChainSpecBuilderCmd::DisplayPreset(DisplayPresetCmd { runtime_wasm_path, preset_name }) => {
-			let code = fs::read(runtime_wasm_path.as_path())
-				.map_err(|e| format!("wasm blob shall be readable {e}"))?;
-			let caller: GenesisConfigBuilderRuntimeCaller =
-				GenesisConfigBuilderRuntimeCaller::new(&code[..]);
-			let preset = caller
-				.get_named_preset(preset_name.as_ref())
-				.map_err(|e| format!("getting default config from runtime should work: {e}"))?;
-			println!("{preset}");
 		},
 	};
 	Ok(())

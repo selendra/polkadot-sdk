@@ -18,10 +18,7 @@
 //! Controller traits defined in this module are high-level traits that will rely on other traits
 //! from `xcm-executor` to perform their tasks.
 
-use frame_support::{
-	dispatch::{DispatchErrorWithPostInfo, WithPostDispatchInfo},
-	pallet_prelude::DispatchError,
-};
+use frame_support::pallet_prelude::DispatchError;
 use sp_std::boxed::Box;
 use xcm::prelude::*;
 pub use xcm_executor::traits::QueryHandler;
@@ -48,15 +45,14 @@ pub trait ExecuteControllerWeightInfo {
 /// Execute an XCM locally, for a given origin.
 ///
 /// An implementation of that trait will handle the low-level details of the execution, such as:
-/// - Validating and Converting the origin to a Location.
+/// - Validating and Converting the origin to a MultiLocation.
 /// - Handling versioning.
 /// - Calling  the internal executor, which implements [`ExecuteXcm`].
 pub trait ExecuteController<Origin, RuntimeCall> {
 	/// Weight information for ExecuteController functions.
 	type WeightInfo: ExecuteControllerWeightInfo;
 
-	/// Attempt to execute an XCM locally, returns Ok with the weight consumed if the execution
-	/// complete successfully, Err otherwise.
+	/// Attempt to execute an XCM locally, and return the outcome.
 	///
 	/// # Parameters
 	///
@@ -67,7 +63,7 @@ pub trait ExecuteController<Origin, RuntimeCall> {
 		origin: Origin,
 		message: Box<VersionedXcm<RuntimeCall>>,
 		max_weight: Weight,
-	) -> Result<Weight, DispatchErrorWithPostInfo>;
+	) -> Result<Outcome, DispatchError>;
 }
 
 /// Weight functions needed for [`SendController`].
@@ -96,7 +92,7 @@ pub trait SendController<Origin> {
 	/// - `msg`: the XCM to be sent.
 	fn send(
 		origin: Origin,
-		dest: Box<VersionedLocation>,
+		dest: Box<VersionedMultiLocation>,
 		message: Box<VersionedXcm<()>>,
 	) -> Result<XcmHash, DispatchError>;
 }
@@ -131,8 +127,8 @@ pub trait QueryController<Origin, Timeout>: QueryHandler {
 	fn query(
 		origin: Origin,
 		timeout: Timeout,
-		match_querier: VersionedLocation,
-	) -> Result<QueryId, DispatchError>;
+		match_querier: VersionedMultiLocation,
+	) -> Result<Self::QueryId, DispatchError>;
 }
 
 impl<Origin, RuntimeCall> ExecuteController<Origin, RuntimeCall> for () {
@@ -141,9 +137,8 @@ impl<Origin, RuntimeCall> ExecuteController<Origin, RuntimeCall> for () {
 		_origin: Origin,
 		_message: Box<VersionedXcm<RuntimeCall>>,
 		_max_weight: Weight,
-	) -> Result<Weight, DispatchErrorWithPostInfo> {
-		Err(DispatchError::Other("ExecuteController::execute not implemented")
-			.with_weight(Weight::zero()))
+	) -> Result<Outcome, DispatchError> {
+		Ok(Outcome::Error(XcmError::Unimplemented))
 	}
 }
 
@@ -157,7 +152,7 @@ impl<Origin> SendController<Origin> for () {
 	type WeightInfo = ();
 	fn send(
 		_origin: Origin,
-		_dest: Box<VersionedLocation>,
+		_dest: Box<VersionedMultiLocation>,
 		_message: Box<VersionedXcm<()>>,
 	) -> Result<XcmHash, DispatchError> {
 		Ok(Default::default())
@@ -185,8 +180,8 @@ impl<Origin, Timeout> QueryController<Origin, Timeout> for () {
 	fn query(
 		_origin: Origin,
 		_timeout: Timeout,
-		_match_querier: VersionedLocation,
-	) -> Result<QueryId, DispatchError> {
+		_match_querier: VersionedMultiLocation,
+	) -> Result<Self::QueryId, DispatchError> {
 		Ok(Default::default())
 	}
 }

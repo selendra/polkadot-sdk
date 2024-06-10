@@ -19,8 +19,6 @@
 //! [`PeerStore`] manages peer reputations and provides connection candidates to
 //! [`crate::protocol_controller::ProtocolController`].
 
-use crate::service::traits::PeerStore as PeerStoreT;
-
 use libp2p::PeerId;
 use log::trace;
 use parking_lot::Mutex;
@@ -35,74 +33,50 @@ use std::{
 };
 use wasm_timer::Delay;
 
+use crate::protocol_controller::ProtocolHandle;
+
 /// Log target for this file.
 pub const LOG_TARGET: &str = "peerset";
 
 /// We don't accept nodes whose reputation is under this value.
-pub const BANNED_THRESHOLD: i32 = 71 * (i32::MIN / 100);
+pub const BANNED_THRESHOLD: i32 = 82 * (i32::MIN / 100);
 /// Reputation change for a node when we get disconnected from it.
 const DISCONNECT_REPUTATION_CHANGE: i32 = -256;
 /// Relative decrement of a reputation value that is applied every second. I.e., for inverse
-/// decrement of 200 we decrease absolute value of the reputation by 1/200.
-///
-/// This corresponds to a factor of `k = 0.955`, where k = 1 - 1 / INVERSE_DECREMENT.
-///
-/// It takes ~ `ln(0.5) / ln(k)` seconds to reduce the reputation by half, or 138.63 seconds for the
-/// values above.
-///
-/// In this setup:
-/// - `i32::MAX` becomes 0 in exactly 3544 seconds, or approximately 59 minutes
-/// - `i32::MIN` becomes 0 in exactly 3544 seconds, or approximately 59 minutes
-/// - `i32::MIN` escapes the banned threshold in 69 seconds
-const INVERSE_DECREMENT: i32 = 200;
+/// decrement of 50 we decrease absolute value of the reputation by 1/50. This corresponds to a
+/// factor of `k = 0.98`. It takes ~ `ln(0.5) / ln(k)` seconds to reduce the reputation by half,
+/// or 34.3 seconds for the values above. In this setup the maximum allowed absolute value of
+/// `i32::MAX` becomes 0 in ~1100 seconds (actually less due to integer arithmetic).
+const INVERSE_DECREMENT: i32 = 50;
 /// Amount of time between the moment we last updated the [`PeerStore`] entry and the moment we
 /// remove it, once the reputation value reaches 0.
 const FORGET_AFTER: Duration = Duration::from_secs(3600);
 
-/// Trait describing the required functionality from a `Peerset` handle.
-pub trait ProtocolHandle: Debug + Send + Sync {
-	/// Disconnect peer.
-	fn disconnect_peer(&self, peer_id: sc_network_types::PeerId);
-}
-
 /// Trait providing peer reputation management and connection candidates.
-pub trait PeerStoreProvider: Debug + Send + Sync {
+pub trait PeerStoreProvider: Debug + Send {
 	/// Check whether the peer is banned.
-	fn is_banned(&self, peer_id: &sc_network_types::PeerId) -> bool;
+	fn is_banned(&self, peer_id: &PeerId) -> bool;
 
 	/// Register a protocol handle to disconnect peers whose reputation drops below the threshold.
-	fn register_protocol(&self, protocol_handle: Arc<dyn ProtocolHandle>);
+	fn register_protocol(&self, protocol_handle: ProtocolHandle);
 
 	/// Report peer disconnection for reputation adjustment.
-	fn report_disconnect(&self, peer_id: sc_network_types::PeerId);
+	fn report_disconnect(&mut self, peer_id: PeerId);
 
 	/// Adjust peer reputation.
-	fn report_peer(&self, peer_id: sc_network_types::PeerId, change: ReputationChange);
+	fn report_peer(&mut self, peer_id: PeerId, change: ReputationChange);
 
 	/// Set peer role.
-	fn set_peer_role(&self, peer_id: &sc_network_types::PeerId, role: ObservedRole);
+	fn set_peer_role(&mut self, peer_id: &PeerId, role: ObservedRole);
 
 	/// Get peer reputation.
-	fn peer_reputation(&self, peer_id: &sc_network_types::PeerId) -> i32;
+	fn peer_reputation(&self, peer_id: &PeerId) -> i32;
 
 	/// Get peer role, if available.
-	fn peer_role(&self, peer_id: &sc_network_types::PeerId) -> Option<ObservedRole>;
+	fn peer_role(&self, peer_id: &PeerId) -> Option<ObservedRole>;
 
 	/// Get candidates with highest reputations for initiating outgoing connections.
-	fn outgoing_candidates(
-		&self,
-		count: usize,
-		ignored: HashSet<sc_network_types::PeerId>,
-	) -> Vec<sc_network_types::PeerId>;
-
-	/// Get the number of known peers.
-	///
-	/// This number might not include some connected peers in rare cases when their reputation
-	/// was not updated for one hour, because their entries in [`PeerStore`] were dropped.
-	fn num_known_peers(&self) -> usize;
-
-	/// Add known peer.
-	fn add_known_peer(&self, peer_id: sc_network_types::PeerId);
+	fn outgoing_candidates(&self, count: usize, ignored: HashSet<&PeerId>) -> Vec<PeerId>;
 }
 
 /// Actual implementation of peer reputations and connection candidates provider.
@@ -112,56 +86,51 @@ pub struct PeerStoreHandle {
 }
 
 impl PeerStoreProvider for PeerStoreHandle {
-	fn is_banned(&self, peer_id: &sc_network_types::PeerId) -> bool {
-		self.inner.lock().is_banned(&peer_id.into())
+	fn is_banned(&self, peer_id: &PeerId) -> bool {
+		self.inner.lock().is_banned(peer_id)
 	}
 
-	fn register_protocol(&self, protocol_handle: Arc<dyn ProtocolHandle>) {
+	fn register_protocol(&self, protocol_handle: ProtocolHandle) {
 		self.inner.lock().register_protocol(protocol_handle);
 	}
 
-	fn report_disconnect(&self, peer_id: sc_network_types::PeerId) {
-		let mut inner = self.inner.lock();
-		inner.report_disconnect(peer_id.into())
+	fn report_disconnect(&mut self, peer_id: PeerId) {
+		self.inner.lock().report_disconnect(peer_id)
 	}
 
-	fn report_peer(&self, peer_id: sc_network_types::PeerId, change: ReputationChange) {
-		let mut inner = self.inner.lock();
-		inner.report_peer(peer_id.into(), change)
+	fn report_peer(&mut self, peer_id: PeerId, change: ReputationChange) {
+		self.inner.lock().report_peer(peer_id, change)
 	}
 
-	fn set_peer_role(&self, peer_id: &sc_network_types::PeerId, role: ObservedRole) {
-		let mut inner = self.inner.lock();
-		inner.set_peer_role(&peer_id.into(), role)
+	fn set_peer_role(&mut self, peer_id: &PeerId, role: ObservedRole) {
+		self.inner.lock().set_peer_role(peer_id, role)
 	}
 
-	fn peer_reputation(&self, peer_id: &sc_network_types::PeerId) -> i32 {
-		self.inner.lock().peer_reputation(&peer_id.into())
+	fn peer_reputation(&self, peer_id: &PeerId) -> i32 {
+		self.inner.lock().peer_reputation(peer_id)
 	}
 
-	fn peer_role(&self, peer_id: &sc_network_types::PeerId) -> Option<ObservedRole> {
-		self.inner.lock().peer_role(&peer_id.into())
+	fn peer_role(&self, peer_id: &PeerId) -> Option<ObservedRole> {
+		self.inner.lock().peer_role(peer_id)
 	}
 
-	fn outgoing_candidates(
-		&self,
-		count: usize,
-		ignored: HashSet<sc_network_types::PeerId>,
-	) -> Vec<sc_network_types::PeerId> {
-		self.inner
-			.lock()
-			.outgoing_candidates(count, ignored.iter().map(|peer_id| (*peer_id).into()).collect())
-			.iter()
-			.map(|peer_id| peer_id.into())
-			.collect()
+	fn outgoing_candidates(&self, count: usize, ignored: HashSet<&PeerId>) -> Vec<PeerId> {
+		self.inner.lock().outgoing_candidates(count, ignored)
 	}
+}
 
-	fn num_known_peers(&self) -> usize {
+impl PeerStoreHandle {
+	/// Get the number of known peers.
+	///
+	/// This number might not include some connected peers in rare cases when their reputation
+	/// was not updated for one hour, because their entries in [`PeerStore`] were dropped.
+	pub fn num_known_peers(&self) -> usize {
 		self.inner.lock().peers.len()
 	}
 
-	fn add_known_peer(&self, peer_id: sc_network_types::PeerId) {
-		self.inner.lock().add_known_peer(peer_id.into());
+	/// Add known peer.
+	pub fn add_known_peer(&mut self, peer_id: PeerId) {
+		self.inner.lock().add_known_peer(peer_id);
 	}
 }
 
@@ -241,7 +210,7 @@ impl PeerInfo {
 #[derive(Debug)]
 struct PeerStoreInner {
 	peers: HashMap<PeerId, PeerInfo>,
-	protocols: Vec<Arc<dyn ProtocolHandle>>,
+	protocols: Vec<ProtocolHandle>,
 }
 
 impl PeerStoreInner {
@@ -249,7 +218,7 @@ impl PeerStoreInner {
 		self.peers.get(peer_id).map_or(false, |info| info.is_banned())
 	}
 
-	fn register_protocol(&mut self, protocol_handle: Arc<dyn ProtocolHandle>) {
+	fn register_protocol(&mut self, protocol_handle: ProtocolHandle) {
 		self.protocols.push(protocol_handle);
 	}
 
@@ -271,7 +240,7 @@ impl PeerStoreInner {
 		peer_info.add_reputation(change.value);
 
 		if peer_info.reputation < BANNED_THRESHOLD {
-			self.protocols.iter().for_each(|handle| handle.disconnect_peer(peer_id.into()));
+			self.protocols.iter().for_each(|handle| handle.disconnect_peer(peer_id));
 
 			log::warn!(
 				target: LOG_TARGET,
@@ -314,7 +283,7 @@ impl PeerStoreInner {
 		self.peers.get(peer_id).map_or(None, |info| info.role)
 	}
 
-	fn outgoing_candidates(&self, count: usize, ignored: HashSet<PeerId>) -> Vec<PeerId> {
+	fn outgoing_candidates(&self, count: usize, ignored: HashSet<&PeerId>) -> Vec<PeerId> {
 		let mut candidates = self
 			.peers
 			.iter()
@@ -409,17 +378,6 @@ impl PeerStore {
 	}
 }
 
-#[async_trait::async_trait]
-impl PeerStoreT for PeerStore {
-	fn handle(&self) -> Arc<dyn PeerStoreProvider> {
-		Arc::new(self.handle())
-	}
-
-	async fn run(self) {
-		self.run().await;
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::PeerInfo;
@@ -463,7 +421,7 @@ mod tests {
 	#[test]
 	fn decaying_max_reputation_finally_yields_zero() {
 		const INITIAL_REPUTATION: i32 = i32::MAX;
-		const SECONDS: u64 = 3544;
+		const SECONDS: u64 = 1000;
 
 		let mut peer_info = PeerInfo::default();
 		peer_info.reputation = INITIAL_REPUTATION;
@@ -478,7 +436,7 @@ mod tests {
 	#[test]
 	fn decaying_min_reputation_finally_yields_zero() {
 		const INITIAL_REPUTATION: i32 = i32::MIN;
-		const SECONDS: u64 = 3544;
+		const SECONDS: u64 = 1000;
 
 		let mut peer_info = PeerInfo::default();
 		peer_info.reputation = INITIAL_REPUTATION;

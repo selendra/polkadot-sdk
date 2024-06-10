@@ -21,11 +21,8 @@
 use crate::{
 	error,
 	protocol::notifications::handler::NotificationsSink,
-	service::{
-		metrics::NotificationMetrics,
-		traits::{
-			Direction, MessageSink, NotificationEvent, NotificationService, ValidationResult,
-		},
+	service::traits::{
+		Direction, MessageSink, NotificationEvent, NotificationService, ValidationResult,
 	},
 	types::ProtocolName,
 };
@@ -57,7 +54,7 @@ const COMMAND_QUEUE_SIZE: usize = 64;
 /// Type representing subscribers of a notification protocol.
 type Subscribers = Arc<Mutex<Vec<TracingUnboundedSender<InnerNotificationEvent>>>>;
 
-/// Type representing a distributable message sink.
+/// Type represending a distributable message sink.
 /// Detached message sink must carry the protocol name for registering metrics.
 ///
 /// See documentation for [`PeerContext`] for more details.
@@ -69,7 +66,7 @@ impl MessageSink for NotificationSink {
 	fn send_sync_notification(&self, notification: Vec<u8>) {
 		let sink = self.lock();
 
-		metrics::register_notification_sent(sink.0.metrics(), &sink.1, notification.len());
+		metrics::register_notification_sent(&sink.0.metrics(), &sink.1, notification.len());
 		sink.0.send_sync_notification(notification);
 	}
 
@@ -90,7 +87,7 @@ impl MessageSink for NotificationSink {
 			.map_err(|_| error::Error::ConnectionClosed)?;
 
 		permit.send(notification).map_err(|_| error::Error::ChannelClosed).map(|res| {
-			metrics::register_notification_sent(sink.0.metrics(), &sink.1, notification_len);
+			metrics::register_notification_sent(&sink.0.metrics(), &sink.1, notification_len);
 			res
 		})
 	}
@@ -178,11 +175,11 @@ pub enum NotificationCommand {
 /// and an additional, distributable `NotificationsSink` which the protocol may acquire
 /// if it wishes to send notifications through `NotificationsSink` directly.
 ///
-/// The distributable `NotificationsSink` is wrapped in an `Arc<Mutex<>>` to allow
+/// The distributable `NoticationsSink` is wrapped in an `Arc<Mutex<>>` to allow
 /// `NotificationsService` to swap the underlying sink in case it's replaced.
 #[derive(Debug, Clone)]
 struct PeerContext {
-	/// Sink for sending notifications.
+	/// Sink for sending notificaitons.
 	sink: NotificationsSink,
 
 	/// Distributable notification sink.
@@ -223,20 +220,20 @@ impl NotificationHandle {
 #[async_trait::async_trait]
 impl NotificationService for NotificationHandle {
 	/// Instruct `Notifications` to open a new substream for `peer`.
-	async fn open_substream(&mut self, _peer: sc_network_types::PeerId) -> Result<(), ()> {
+	async fn open_substream(&mut self, _peer: PeerId) -> Result<(), ()> {
 		todo!("support for opening substreams not implemented yet");
 	}
 
 	/// Instruct `Notifications` to close substream for `peer`.
-	async fn close_substream(&mut self, _peer: sc_network_types::PeerId) -> Result<(), ()> {
+	async fn close_substream(&mut self, _peer: PeerId) -> Result<(), ()> {
 		todo!("support for closing substreams not implemented yet, call `NetworkService::disconnect_peer()` instead");
 	}
 
 	/// Send synchronous `notification` to `peer`.
-	fn send_sync_notification(&mut self, peer: &sc_network_types::PeerId, notification: Vec<u8>) {
-		if let Some(info) = self.peers.get(&((*peer).into())) {
+	fn send_sync_notification(&self, peer: &PeerId, notification: Vec<u8>) {
+		if let Some(info) = self.peers.get(&peer) {
 			metrics::register_notification_sent(
-				info.sink.metrics(),
+				&info.sink.metrics(),
 				&self.protocol,
 				notification.len(),
 			);
@@ -247,16 +244,12 @@ impl NotificationService for NotificationHandle {
 
 	/// Send asynchronous `notification` to `peer`, allowing sender to exercise backpressure.
 	async fn send_async_notification(
-		&mut self,
-		peer: &sc_network_types::PeerId,
+		&self,
+		peer: &PeerId,
 		notification: Vec<u8>,
 	) -> Result<(), error::Error> {
 		let notification_len = notification.len();
-		let sink = &self
-			.peers
-			.get(&peer.into())
-			.ok_or_else(|| error::Error::PeerDoesntExist((*peer).into()))?
-			.sink;
+		let sink = &self.peers.get(&peer).ok_or_else(|| error::Error::PeerDoesntExist(*peer))?.sink;
 
 		sink.reserve_notification()
 			.await
@@ -265,7 +258,7 @@ impl NotificationService for NotificationHandle {
 			.map_err(|_| error::Error::ChannelClosed)
 			.map(|res| {
 				metrics::register_notification_sent(
-					sink.metrics(),
+					&sink.metrics(),
 					&self.protocol,
 					notification_len,
 				);
@@ -295,7 +288,7 @@ impl NotificationService for NotificationHandle {
 			match self.rx.next().await? {
 				InnerNotificationEvent::ValidateInboundSubstream { peer, handshake, result_tx } =>
 					return Some(NotificationEvent::ValidateInboundSubstream {
-						peer: peer.into(),
+						peer,
 						handshake,
 						result_tx,
 					}),
@@ -314,7 +307,7 @@ impl NotificationService for NotificationHandle {
 						},
 					);
 					return Some(NotificationEvent::NotificationStreamOpened {
-						peer: peer.into(),
+						peer,
 						handshake,
 						direction,
 						negotiated_fallback,
@@ -322,13 +315,10 @@ impl NotificationService for NotificationHandle {
 				},
 				InnerNotificationEvent::NotificationStreamClosed { peer } => {
 					self.peers.remove(&peer);
-					return Some(NotificationEvent::NotificationStreamClosed { peer: peer.into() })
+					return Some(NotificationEvent::NotificationStreamClosed { peer })
 				},
 				InnerNotificationEvent::NotificationReceived { peer, notification } =>
-					return Some(NotificationEvent::NotificationReceived {
-						peer: peer.into(),
-						notification,
-					}),
+					return Some(NotificationEvent::NotificationReceived { peer, notification }),
 				InnerNotificationEvent::NotificationSinkReplaced { peer, sink } => {
 					match self.peers.get_mut(&peer) {
 						None => log::error!(
@@ -348,8 +338,7 @@ impl NotificationService for NotificationHandle {
 	// Clone [`NotificationService`]
 	fn clone(&mut self) -> Result<Box<dyn NotificationService>, ()> {
 		let mut subscribers = self.subscribers.lock();
-
-		let (event_tx, event_rx) = tracing_unbounded(self.rx.name(), 100_000);
+		let (event_tx, event_rx) = tracing_unbounded("mpsc-notification-to-protocol", 100_000);
 		subscribers.push(event_tx);
 
 		Ok(Box::new(NotificationHandle {
@@ -367,8 +356,8 @@ impl NotificationService for NotificationHandle {
 	}
 
 	/// Get message sink of the peer.
-	fn message_sink(&self, peer: &sc_network_types::PeerId) -> Option<Box<dyn MessageSink>> {
-		match self.peers.get(&peer.into()) {
+	fn message_sink(&self, peer: &PeerId) -> Option<Box<dyn MessageSink>> {
+		match self.peers.get(peer) {
 			Some(context) => Some(Box::new(context.shared_sink.clone())),
 			None => None,
 		}
@@ -427,7 +416,7 @@ pub(crate) struct ProtocolHandle {
 	delegate_to_peerset: bool,
 
 	/// Prometheus metrics.
-	metrics: Option<NotificationMetrics>,
+	metrics: Option<metrics::Metrics>,
 }
 
 pub(crate) enum ValidationCallResult {
@@ -442,8 +431,8 @@ impl ProtocolHandle {
 	}
 
 	/// Set metrics.
-	pub fn set_metrics(&mut self, metrics: NotificationMetrics) {
-		self.metrics = Some(metrics);
+	pub fn set_metrics(&mut self, metrics: Option<metrics::Metrics>) {
+		self.metrics = metrics;
 	}
 
 	/// Delegate validation to `Peerset`.
@@ -635,24 +624,11 @@ pub fn notification_service(
 	protocol: ProtocolName,
 ) -> (ProtocolHandlePair, Box<dyn NotificationService>) {
 	let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_QUEUE_SIZE);
-
-	let (event_tx, event_rx) =
-		tracing_unbounded(metric_label_for_protocol(&protocol).leak(), 100_000);
+	let (event_tx, event_rx) = tracing_unbounded("mpsc-notification-to-protocol", 100_000);
 	let subscribers = Arc::new(Mutex::new(vec![event_tx]));
 
 	(
 		ProtocolHandlePair::new(protocol.clone(), subscribers.clone(), cmd_rx),
 		Box::new(NotificationHandle::new(protocol.clone(), cmd_tx, event_rx, subscribers)),
 	)
-}
-
-// Decorates the mpsc-notification-to-protocol metric with the name of the protocol,
-// to be able to distiguish between different protocols in dashboards.
-fn metric_label_for_protocol(protocol: &ProtocolName) -> String {
-	let protocol_name = protocol.to_string();
-	let keys = protocol_name.split("/").collect::<Vec<_>>();
-	keys.iter()
-		.rev()
-		.take(2) // Last two tokens give the protocol name and version
-		.fold("mpsc-notification-to-protocol".into(), |acc, val| format!("{}-{}", acc, val))
 }

@@ -19,25 +19,26 @@ use sp_std::marker::PhantomData;
 use xcm::latest::prelude::*;
 
 /// Creates asset pairs for liquidity pools with `Target` always being the first asset.
-pub struct AssetPairFactory<Target, SelfParaId, PalletId, L = Location>(
-	PhantomData<(Target, SelfParaId, PalletId, L)>,
+pub struct AssetPairFactory<Target, SelfParaId, PalletId>(
+	PhantomData<(Target, SelfParaId, PalletId)>,
 );
-impl<Target: Get<L>, SelfParaId: Get<ParaId>, PalletId: Get<u32>, L: TryFrom<Location>>
-	pallet_asset_conversion::BenchmarkHelper<L> for AssetPairFactory<Target, SelfParaId, PalletId, L>
+impl<Target: Get<MultiLocation>, SelfParaId: Get<ParaId>, PalletId: Get<u32>>
+	pallet_asset_conversion::BenchmarkHelper<MultiLocation>
+	for AssetPairFactory<Target, SelfParaId, PalletId>
 {
-	fn create_pair(seed1: u32, seed2: u32) -> (L, L) {
-		let with_id = Location::new(
+	fn create_pair(seed1: u32, seed2: u32) -> (MultiLocation, MultiLocation) {
+		let with_id = MultiLocation::new(
 			1,
-			[
+			X3(
 				Parachain(SelfParaId::get().into()),
 				PalletInstance(PalletId::get() as u8),
 				GeneralIndex(seed2.into()),
-			],
+			),
 		);
 		if seed1 % 2 == 0 {
-			(with_id.try_into().map_err(|_| "Something went wrong").unwrap(), Target::get())
+			(with_id, Target::get())
 		} else {
-			(Target::get(), with_id.try_into().map_err(|_| "Something went wrong").unwrap())
+			(Target::get(), with_id)
 		}
 	}
 }

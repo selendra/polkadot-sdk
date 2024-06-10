@@ -19,7 +19,6 @@
 
 use super::*;
 use crate as pallet_asset_conversion;
-use core::default::Default;
 use frame_support::{
 	construct_runtime, derive_impl,
 	instances::{Instance1, Instance2},
@@ -29,16 +28,18 @@ use frame_support::{
 			fungible::{NativeFromLeft, NativeOrWithId, UnionOf},
 			imbalance::ResolveAssetTo,
 		},
-		AsEnsureOriginWithArg, ConstU128, ConstU32,
+		AsEnsureOriginWithArg, ConstU128, ConstU32, ConstU64,
 	},
 	PalletId,
 };
 use frame_system::{EnsureSigned, EnsureSignedBy};
 use sp_arithmetic::Permill;
+use sp_core::H256;
 use sp_runtime::{
-	traits::{AccountIdConversion, IdentityLookup},
+	traits::{AccountIdConversion, BlakeTwo256, IdentityLookup},
 	BuildStorage,
 };
+use sp_std::default::Default;
 
 type Block = frame_system::mocking::MockBlock<Test>;
 
@@ -53,12 +54,31 @@ construct_runtime!(
 	}
 );
 
-#[derive_impl(frame_system::config_preludes::TestDefaultConfig)]
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
+	type BaseCallFilter = frame_support::traits::Everything;
+	type BlockWeights = ();
+	type BlockLength = ();
+	type RuntimeOrigin = RuntimeOrigin;
+	type RuntimeCall = RuntimeCall;
+	type Nonce = u64;
+	type Hash = H256;
+	type Hashing = BlakeTwo256;
 	type AccountId = u128;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Block = Block;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU64<250>;
+	type DbWeight = ();
+	type Version = ();
+	type PalletInfo = PalletInfo;
 	type AccountData = pallet_balances::AccountData<u128>;
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 impl pallet_balances::Config for Test {
@@ -75,6 +95,7 @@ impl pallet_balances::Config for Test {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type MaxHolds = ();
 }
 
 impl pallet_assets::Config<Instance1> for Test {
@@ -137,11 +158,8 @@ ord_parameter_types! {
 }
 
 pub type NativeAndAssets = UnionOf<Balances, Assets, NativeFromLeft, NativeOrWithId<u32>, u128>;
-pub type PoolIdToAccountId =
-	AccountIdConverter<AssetConversionPalletId, (NativeOrWithId<u32>, NativeOrWithId<u32>)>;
-pub type AscendingLocator = Ascending<u128, NativeOrWithId<u32>, PoolIdToAccountId>;
-pub type WithFirstAssetLocator =
-	WithFirstAsset<Native, u128, NativeOrWithId<u32>, PoolIdToAccountId>;
+pub type AscendingLocator = Ascending<u128, NativeOrWithId<u32>>;
+pub type WithFirstAssetLocator = WithFirstAsset<Native, u128, NativeOrWithId<u32>>;
 
 impl Config for Test {
 	type RuntimeEvent = RuntimeEvent;

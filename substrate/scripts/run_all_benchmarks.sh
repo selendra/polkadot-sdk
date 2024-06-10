@@ -59,12 +59,11 @@ done
 if [ "$skip_build" != true ]
 then
   echo "[+] Compiling Substrate benchmarks..."
-  cargo build --profile=production --locked --features=runtime-benchmarks --bin substrate-node
+  cargo build --profile=production --locked --features=runtime-benchmarks --bin substrate
 fi
 
 # The executable to use.
-# Parent directory because of the monorepo structure.
-SUBSTRATE=../target/production/substrate-node
+SUBSTRATE=./target/production/substrate
 
 # Manually exclude some pallets.
 EXCLUDED_PALLETS=(
@@ -81,7 +80,11 @@ EXCLUDED_PALLETS=(
 
 # Load all pallet names in an array.
 ALL_PALLETS=($(
-  $SUBSTRATE benchmark pallet --list=pallets --no-csv-header --chain=dev
+  $SUBSTRATE benchmark pallet --list --chain=dev |\
+    tail -n+2 |\
+    cut -d',' -f1 |\
+    sort |\
+    uniq
 ))
 
 # Filter out the excluded pallets by concatenating the arrays and discarding duplicates.

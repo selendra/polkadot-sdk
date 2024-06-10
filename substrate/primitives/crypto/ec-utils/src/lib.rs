@@ -32,8 +32,6 @@
 #![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-extern crate alloc;
-
 #[cfg(feature = "bls12-377")]
 pub mod bls12_377;
 #[cfg(feature = "bls12-381")]

@@ -59,7 +59,7 @@ pub mod pallet {
 	use frame_system::pallet_prelude::*;
 	use sp_runtime::{traits::BadOrigin, Saturating};
 
-	/// The in-code storage version.
+	/// The current storage version.
 	const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
 	#[pallet::pallet]

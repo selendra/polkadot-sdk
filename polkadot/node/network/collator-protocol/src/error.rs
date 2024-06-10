@@ -89,21 +89,13 @@ pub enum SecondingError {
 
 	#[error("Received duplicate collation from the peer")]
 	Duplicate,
-
-	#[error("The provided parent head data does not match the hash")]
-	ParentHeadDataMismatch,
 }
 
 impl SecondingError {
 	/// Returns true if an error indicates that a peer is malicious.
 	pub fn is_malicious(&self) -> bool {
 		use SecondingError::*;
-		matches!(
-			self,
-			PersistedValidationDataMismatch |
-				CandidateHashMismatch |
-				Duplicate | ParentHeadDataMismatch
-		)
+		matches!(self, PersistedValidationDataMismatch | CandidateHashMismatch | Duplicate)
 	}
 }
 

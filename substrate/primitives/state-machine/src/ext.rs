@@ -32,10 +32,12 @@ use sp_core::storage::{
 use sp_externalities::{Extension, ExtensionStore, Externalities, MultiRemovalResults};
 
 use crate::{log_error, trace, warn};
-use alloc::{boxed::Box, vec, vec::Vec};
-use core::{
+use sp_std::{
 	any::{Any, TypeId},
+	boxed::Box,
 	cmp::Ordering,
+	vec,
+	vec::Vec,
 };
 #[cfg(feature = "std")]
 use std::error;
@@ -44,7 +46,7 @@ const EXT_NOT_ALLOWED_TO_FAIL: &str = "Externalities not allowed to fail within 
 const BENCHMARKING_FN: &str = "\
 	This is a special fn only for benchmarking where a database commit happens from the runtime.
 	For that reason client started transactions before calling into runtime are not allowed.
-	Without client transactions the loop condition guarantees the success of the tx close.";
+	Without client transactions the loop condition garantuees the success of the tx close.";
 
 #[cfg(feature = "std")]
 fn guard() -> sp_panic_handler::AbortGuard {
@@ -722,7 +724,7 @@ impl Encode for EncodeOpaqueValue {
 	}
 }
 
-/// Auxiliary structure for appending a value to a storage item.
+/// Auxialiary structure for appending a value to a storage item.
 pub(crate) struct StorageAppend<'a>(&'a mut Vec<u8>);
 
 impl<'a> StorageAppend<'a> {
@@ -737,7 +739,7 @@ impl<'a> StorageAppend<'a> {
 	pub fn append(&mut self, value: Vec<u8>) {
 		let value = vec![EncodeOpaqueValue(value)];
 
-		let item = core::mem::take(self.0);
+		let item = sp_std::mem::take(self.0);
 
 		*self.0 = match Vec::<EncodeOpaqueValue>::append_or_new(item, &value) {
 			Ok(item) => item,

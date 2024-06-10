@@ -19,13 +19,10 @@
 use crate::{
 	protocol::notifications::{
 		handler::{self, NotificationsSink, NotifsHandler, NotifsHandlerIn, NotifsHandlerOut},
-		service::{NotificationCommand, ProtocolHandle, ValidationCallResult},
+		service::{metrics, NotificationCommand, ProtocolHandle, ValidationCallResult},
 	},
 	protocol_controller::{self, IncomingIndex, Message, SetId},
-	service::{
-		metrics::NotificationMetrics,
-		traits::{Direction, ValidationResult},
-	},
+	service::traits::{Direction, ValidationResult},
 	types::ProtocolName,
 };
 
@@ -170,7 +167,7 @@ pub struct Notifications {
 	pending_inbound_validations: FuturesUnordered<PendingInboundValidation>,
 
 	/// Metrics for notifications.
-	metrics: NotificationMetrics,
+	metrics: Option<metrics::Metrics>,
 }
 
 /// Configuration for a notifications protocol.
@@ -407,7 +404,7 @@ impl Notifications {
 	pub(crate) fn new(
 		protocol_controller_handles: Vec<protocol_controller::ProtocolHandle>,
 		from_protocol_controllers: TracingUnboundedReceiver<Message>,
-		metrics: NotificationMetrics,
+		metrics: Option<metrics::Metrics>,
 		notif_protocols: impl Iterator<
 			Item = (
 				ProtocolConfig,
@@ -1233,7 +1230,7 @@ impl NetworkBehaviour for Notifications {
 				send_back_addr: remote_addr.clone(),
 			},
 			self.notif_protocols.clone(),
-			Some(self.metrics.clone()),
+			self.metrics.clone(),
 		))
 	}
 
@@ -1248,7 +1245,7 @@ impl NetworkBehaviour for Notifications {
 			peer,
 			ConnectedPoint::Dialer { address: addr.clone(), role_override },
 			self.notif_protocols.clone(),
-			Some(self.metrics.clone()),
+			self.metrics.clone(),
 		))
 	}
 
@@ -2445,7 +2442,7 @@ mod tests {
 				reserved_only: false,
 			},
 			to_notifications,
-			Arc::new(MockPeerStore {}),
+			Box::new(MockPeerStore {}),
 		);
 
 		let (notif_handle, command_stream) = protocol_handle_pair.split();
@@ -2453,7 +2450,7 @@ mod tests {
 			Notifications::new(
 				vec![handle],
 				from_controller,
-				NotificationMetrics::new(None),
+				None,
 				iter::once((
 					ProtocolConfig {
 						name: "/foo".into(),
@@ -2671,7 +2668,7 @@ mod tests {
 		//
 		// there is not straight-forward way of adding backoff to `PeerState::Disabled`
 		// so manually adjust the value in order to progress on to the next stage.
-		// This modification together with `ConnectionClosed` will convert the peer
+		// This modification together with `ConnectionClosed` will conver the peer
 		// state into `PeerState::Backoff`.
 		if let Some(PeerState::Disabled { ref mut backoff_until, .. }) =
 			notif.peers.get_mut(&(peer, set_id))

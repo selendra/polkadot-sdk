@@ -18,11 +18,7 @@
 
 use frame_support::traits::{
 	tokens::{
-		fungibles,
-		Fortitude::Polite,
-		Precision::Exact,
-		Preservation::{Expendable, Preserve},
-		Provenance::Minted,
+		fungibles, Fortitude::Polite, Precision::Exact, Preservation::Preserve, Provenance::Minted,
 	},
 	Contains, Get,
 };
@@ -42,11 +38,11 @@ impl<
 	> TransactAsset for FungiblesTransferAdapter<Assets, Matcher, AccountIdConverter, AccountId>
 {
 	fn internal_transfer_asset(
-		what: &Asset,
-		from: &Location,
-		to: &Location,
+		what: &MultiAsset,
+		from: &MultiLocation,
+		to: &MultiLocation,
 		_context: &XcmContext,
-	) -> result::Result<xcm_executor::AssetsInHolding, XcmError> {
+	) -> result::Result<xcm_executor::Assets, XcmError> {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"internal_transfer_asset what: {:?}, from: {:?}, to: {:?}",
@@ -180,8 +176,7 @@ impl<
 	}
 	fn reduce_checked(asset_id: Assets::AssetId, amount: Assets::Balance) {
 		let checking_account = CheckingAccount::get();
-		let ok = Assets::burn_from(asset_id, &checking_account, amount, Expendable, Exact, Polite)
-			.is_ok();
+		let ok = Assets::burn_from(asset_id, &checking_account, amount, Exact, Polite).is_ok();
 		debug_assert!(ok, "`can_reduce_checked` must have returned `true` immediately prior; qed");
 	}
 }
@@ -203,7 +198,11 @@ impl<
 		CheckingAccount,
 	>
 {
-	fn can_check_in(_origin: &Location, what: &Asset, _context: &XcmContext) -> XcmResult {
+	fn can_check_in(
+		_origin: &MultiLocation,
+		what: &MultiAsset,
+		_context: &XcmContext,
+	) -> XcmResult {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"can_check_in origin: {:?}, what: {:?}",
@@ -220,7 +219,7 @@ impl<
 		}
 	}
 
-	fn check_in(_origin: &Location, what: &Asset, _context: &XcmContext) {
+	fn check_in(_origin: &MultiLocation, what: &MultiAsset, _context: &XcmContext) {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"check_in origin: {:?}, what: {:?}",
@@ -237,10 +236,14 @@ impl<
 		}
 	}
 
-	fn can_check_out(_origin: &Location, what: &Asset, _context: &XcmContext) -> XcmResult {
+	fn can_check_out(
+		_origin: &MultiLocation,
+		what: &MultiAsset,
+		_context: &XcmContext,
+	) -> XcmResult {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
-			"can_check_out origin: {:?}, what: {:?}",
+			"can_check_in origin: {:?}, what: {:?}",
 			_origin, what
 		);
 		// Check we handle this asset.
@@ -254,7 +257,7 @@ impl<
 		}
 	}
 
-	fn check_out(_dest: &Location, what: &Asset, _context: &XcmContext) {
+	fn check_out(_dest: &MultiLocation, what: &MultiAsset, _context: &XcmContext) {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"check_out dest: {:?}, what: {:?}",
@@ -271,7 +274,11 @@ impl<
 		}
 	}
 
-	fn deposit_asset(what: &Asset, who: &Location, _context: Option<&XcmContext>) -> XcmResult {
+	fn deposit_asset(
+		what: &MultiAsset,
+		who: &MultiLocation,
+		_context: Option<&XcmContext>,
+	) -> XcmResult {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"deposit_asset what: {:?}, who: {:?}",
@@ -287,10 +294,10 @@ impl<
 	}
 
 	fn withdraw_asset(
-		what: &Asset,
-		who: &Location,
+		what: &MultiAsset,
+		who: &MultiLocation,
 		_maybe_context: Option<&XcmContext>,
-	) -> result::Result<xcm_executor::AssetsInHolding, XcmError> {
+	) -> result::Result<xcm_executor::Assets, XcmError> {
 		log::trace!(
 			target: "xcm::fungibles_adapter",
 			"withdraw_asset what: {:?}, who: {:?}",
@@ -300,7 +307,7 @@ impl<
 		let (asset_id, amount) = Matcher::matches_fungibles(what)?;
 		let who = AccountIdConverter::convert_location(who)
 			.ok_or(MatchError::AccountIdConversionFailed)?;
-		Assets::burn_from(asset_id, &who, amount, Expendable, Exact, Polite)
+		Assets::burn_from(asset_id, &who, amount, Exact, Polite)
 			.map_err(|e| XcmError::FailedToTransactAsset(e.into()))?;
 		Ok(what.clone().into())
 	}
@@ -324,7 +331,7 @@ impl<
 	> TransactAsset
 	for FungiblesAdapter<Assets, Matcher, AccountIdConverter, AccountId, CheckAsset, CheckingAccount>
 {
-	fn can_check_in(origin: &Location, what: &Asset, context: &XcmContext) -> XcmResult {
+	fn can_check_in(origin: &MultiLocation, what: &MultiAsset, context: &XcmContext) -> XcmResult {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -335,7 +342,7 @@ impl<
 		>::can_check_in(origin, what, context)
 	}
 
-	fn check_in(origin: &Location, what: &Asset, context: &XcmContext) {
+	fn check_in(origin: &MultiLocation, what: &MultiAsset, context: &XcmContext) {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -346,7 +353,7 @@ impl<
 		>::check_in(origin, what, context)
 	}
 
-	fn can_check_out(dest: &Location, what: &Asset, context: &XcmContext) -> XcmResult {
+	fn can_check_out(dest: &MultiLocation, what: &MultiAsset, context: &XcmContext) -> XcmResult {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -357,7 +364,7 @@ impl<
 		>::can_check_out(dest, what, context)
 	}
 
-	fn check_out(dest: &Location, what: &Asset, context: &XcmContext) {
+	fn check_out(dest: &MultiLocation, what: &MultiAsset, context: &XcmContext) {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -368,7 +375,11 @@ impl<
 		>::check_out(dest, what, context)
 	}
 
-	fn deposit_asset(what: &Asset, who: &Location, context: Option<&XcmContext>) -> XcmResult {
+	fn deposit_asset(
+		what: &MultiAsset,
+		who: &MultiLocation,
+		context: Option<&XcmContext>,
+	) -> XcmResult {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -380,10 +391,10 @@ impl<
 	}
 
 	fn withdraw_asset(
-		what: &Asset,
-		who: &Location,
+		what: &MultiAsset,
+		who: &MultiLocation,
 		maybe_context: Option<&XcmContext>,
-	) -> result::Result<xcm_executor::AssetsInHolding, XcmError> {
+	) -> result::Result<xcm_executor::Assets, XcmError> {
 		FungiblesMutateAdapter::<
 			Assets,
 			Matcher,
@@ -395,11 +406,11 @@ impl<
 	}
 
 	fn internal_transfer_asset(
-		what: &Asset,
-		from: &Location,
-		to: &Location,
+		what: &MultiAsset,
+		from: &MultiLocation,
+		to: &MultiLocation,
 		context: &XcmContext,
-	) -> result::Result<xcm_executor::AssetsInHolding, XcmError> {
+	) -> result::Result<xcm_executor::Assets, XcmError> {
 		FungiblesTransferAdapter::<Assets, Matcher, AccountIdConverter, AccountId>::internal_transfer_asset(
 			what, from, to, context
 		)

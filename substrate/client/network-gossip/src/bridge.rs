@@ -32,9 +32,9 @@ use futures::{
 	channel::mpsc::{channel, Receiver, Sender},
 	prelude::*,
 };
+use libp2p::PeerId;
 use log::trace;
 use prometheus_endpoint::Registry;
-use sc_network_types::PeerId;
 use sp_runtime::traits::Block as BlockT;
 use std::{
 	collections::{HashMap, VecDeque},
@@ -359,7 +359,9 @@ mod tests {
 	use sc_network::{
 		config::MultiaddrWithPeerId,
 		service::traits::{Direction, MessageSink, NotificationEvent},
-		Event, NetworkBlock, NetworkEventStream, NetworkPeers, NotificationService, Roles,
+		Event, NetworkBlock, NetworkEventStream, NetworkNotification, NetworkPeers,
+		NotificationSenderError, NotificationSenderT as NotificationSender, NotificationService,
+		Roles,
 	};
 	use sc_network_common::role::ObservedRole;
 	use sc_network_sync::SyncEventStream;
@@ -379,7 +381,6 @@ mod tests {
 	#[derive(Clone, Default)]
 	struct TestNetworkInner {}
 
-	#[async_trait::async_trait]
 	impl NetworkPeers for TestNetwork {
 		fn set_authorized_peers(&self, _peers: HashSet<PeerId>) {
 			unimplemented!();
@@ -452,14 +453,28 @@ mod tests {
 				.ok()
 				.and_then(|role| Some(ObservedRole::from(role)))
 		}
-
-		async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
-			unimplemented!();
-		}
 	}
 
 	impl NetworkEventStream for TestNetwork {
 		fn event_stream(&self, _name: &'static str) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
+			unimplemented!();
+		}
+	}
+
+	impl NetworkNotification for TestNetwork {
+		fn write_notification(&self, _target: PeerId, _protocol: ProtocolName, _message: Vec<u8>) {
+			unimplemented!();
+		}
+
+		fn notification_sender(
+			&self,
+			_target: PeerId,
+			_protocol: ProtocolName,
+		) -> Result<Box<dyn NotificationSender>, NotificationSenderError> {
+			unimplemented!();
+		}
+
+		fn set_notification_handshake(&self, _protocol: ProtocolName, _handshake: Vec<u8>) {
 			unimplemented!();
 		}
 	}
@@ -529,12 +544,12 @@ mod tests {
 			unimplemented!();
 		}
 
-		fn send_sync_notification(&mut self, _peer: &PeerId, _notification: Vec<u8>) {
+		fn send_sync_notification(&self, _peer: &PeerId, _notification: Vec<u8>) {
 			unimplemented!();
 		}
 
 		async fn send_async_notification(
-			&mut self,
+			&self,
 			_peer: &PeerId,
 			_notification: Vec<u8>,
 		) -> Result<(), sc_network::error::Error> {

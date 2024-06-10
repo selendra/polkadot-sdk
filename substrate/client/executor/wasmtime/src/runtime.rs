@@ -30,10 +30,10 @@ use sc_executor_common::{
 	error::{Error, Result, WasmError},
 	runtime_blob::RuntimeBlob,
 	util::checked_range,
-	wasm_runtime::{HeapAllocStrategy, WasmInstance, WasmModule},
+	wasm_runtime::{HeapAllocStrategy, InvokeMethod, WasmInstance, WasmModule},
 };
 use sp_runtime_interface::unpack_ptr_and_len;
-use sp_wasm_interface::{HostFunctions, Pointer, WordSize};
+use sp_wasm_interface::{HostFunctions, Pointer, Value, WordSize};
 use std::{
 	path::{Path, PathBuf},
 	sync::{
@@ -41,7 +41,7 @@ use std::{
 		Arc,
 	},
 };
-use wasmtime::{AsContext, Engine, Memory};
+use wasmtime::{AsContext, Engine, Memory, Table};
 
 const MAX_INSTANCE_COUNT: u32 = 64;
 
@@ -51,6 +51,8 @@ pub(crate) struct StoreData {
 	pub(crate) host_state: Option<HostState>,
 	/// This will be always set once the store is initialized.
 	pub(crate) memory: Option<Memory>,
+	/// This will be set only if the runtime actually contains a table.
+	pub(crate) table: Option<Table>,
 }
 
 impl StoreData {
@@ -162,7 +164,7 @@ pub struct WasmtimeInstance {
 impl WasmtimeInstance {
 	fn call_impl(
 		&mut self,
-		method: &str,
+		method: InvokeMethod,
 		data: &[u8],
 		allocation_stats: &mut Option<AllocationStats>,
 	) -> Result<Vec<u8>> {
@@ -182,12 +184,19 @@ impl WasmtimeInstance {
 impl WasmInstance for WasmtimeInstance {
 	fn call_with_allocation_stats(
 		&mut self,
-		method: &str,
+		method: InvokeMethod,
 		data: &[u8],
 	) -> (Result<Vec<u8>>, Option<AllocationStats>) {
 		let mut allocation_stats = None;
 		let result = self.call_impl(method, data, &mut allocation_stats);
 		(result, allocation_stats)
+	}
+
+	fn get_global_const(&mut self, name: &str) -> Result<Option<Value>> {
+		match &mut self.strategy {
+			Strategy::RecreateInstance(ref mut instance_creator) =>
+				instance_creator.instantiate()?.get_global_val(name),
+		}
 	}
 }
 
@@ -462,7 +471,7 @@ pub struct Semantics {
 pub struct Config {
 	/// The WebAssembly standard requires all imports of an instantiated module to be resolved,
 	/// otherwise, the instantiation fails. If this option is set to `true`, then this behavior is
-	/// overridden and imports that are requested by the module and not provided by the host
+	/// overriden and imports that are requested by the module and not provided by the host
 	/// functions will be resolved using stubs. These stubs will trap upon a call.
 	pub allow_missing_func_imports: bool,
 

@@ -1,11 +1,11 @@
-### Changelog for `{{ env.TARGET_AUDIENCE }}`
+## Release {{ env.PRODUCT }} {{ env.VERSION }}
 
-{{ env.AUDIENCE_DESC }}
+Changelog for `{{ env.TARGET_AUDIENCE }}`.
 
 {% for file in prdoc -%}
+#### PR #{{file.doc_filename.number}}: {{ file.content.title }}
 {% for doc_item in file.content.doc %}
 {%- if doc_item.audience == env.TARGET_AUDIENCE %}
-#### [#{{file.doc_filename.number}}]: {{ file.content.title }}
 {{ doc_item.description }}
 {% endif -%}
 

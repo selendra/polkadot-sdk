@@ -17,13 +17,12 @@
 use super::*;
 use crate::{
 	configuration::HostConfiguration,
-	mock::{new_test_ext, MockGenesisConfig, ParasShared, Test},
-	shared,
+	mock::{new_test_ext, MockGenesisConfig, ParasShared},
 };
 use assert_matches::assert_matches;
-use polkadot_primitives::Hash;
-use polkadot_primitives_test_helpers::validator_pubkeys;
-use sp_keyring::Sr25519Keyring;
+use keyring::Sr25519Keyring;
+use primitives::Hash;
+use test_helpers::validator_pubkeys;
 
 #[test]
 fn tracker_earliest_block_number() {
@@ -121,10 +120,10 @@ fn sets_and_shuffles_validators() {
 			])
 		);
 
-		assert_eq!(shared::ActiveValidatorKeys::<Test>::get(), validators);
+		assert_eq!(ParasShared::active_validator_keys(), validators);
 
 		assert_eq!(
-			shared::ActiveValidatorIndices::<Test>::get(),
+			ParasShared::active_validator_indices(),
 			vec![
 				ValidatorIndex(4),
 				ValidatorIndex(1),
@@ -156,10 +155,10 @@ fn sets_truncates_and_shuffles_validators() {
 
 		assert_eq!(validators, validator_pubkeys(&[Sr25519Keyring::Ferdie, Sr25519Keyring::Bob,]));
 
-		assert_eq!(shared::ActiveValidatorKeys::<Test>::get(), validators);
+		assert_eq!(ParasShared::active_validator_keys(), validators);
 
 		assert_eq!(
-			shared::ActiveValidatorIndices::<Test>::get(),
+			ParasShared::active_validator_indices(),
 			vec![ValidatorIndex(4), ValidatorIndex(1),]
 		);
 	});

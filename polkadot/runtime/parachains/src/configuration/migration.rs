@@ -18,7 +18,6 @@
 
 pub mod v10;
 pub mod v11;
-pub mod v12;
 pub mod v6;
 pub mod v7;
 pub mod v8;

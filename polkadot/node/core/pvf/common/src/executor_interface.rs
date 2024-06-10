@@ -16,7 +16,6 @@
 
 //! Interface to the Substrate Executor
 
-use crate::error::ExecuteError;
 use polkadot_primitives::{
 	executor_params::{DEFAULT_LOGICAL_STACK_MAX, DEFAULT_NATIVE_STACK_MAX},
 	ExecutorParam, ExecutorParams,
@@ -24,7 +23,7 @@ use polkadot_primitives::{
 use sc_executor_common::{
 	error::WasmError,
 	runtime_blob::RuntimeBlob,
-	wasm_runtime::{HeapAllocStrategy, WasmModule as _},
+	wasm_runtime::{HeapAllocStrategy, InvokeMethod, WasmModule as _},
 };
 use sc_executor_wasmtime::{Config, DeterministicStackLimit, Semantics, WasmtimeRuntime};
 use sp_core::storage::{ChildInfo, TrackedStorageKey};
@@ -110,7 +109,7 @@ pub unsafe fn execute_artifact(
 	compiled_artifact_blob: &[u8],
 	executor_params: &ExecutorParams,
 	params: &[u8],
-) -> Result<Vec<u8>, ExecuteError> {
+) -> Result<Vec<u8>, String> {
 	let mut extensions = sp_externalities::Extensions::new();
 
 	extensions.register(sp_core::traits::ReadRuntimeVersionExt::new(ReadRuntimeVersion));
@@ -119,11 +118,12 @@ pub unsafe fn execute_artifact(
 
 	match sc_executor::with_externalities_safe(&mut ext, || {
 		let runtime = create_runtime_from_artifact_bytes(compiled_artifact_blob, executor_params)?;
-		runtime.new_instance()?.call("validate_block", params)
+		runtime.new_instance()?.call(InvokeMethod::Export("validate_block"), params)
 	}) {
 		Ok(Ok(ok)) => Ok(ok),
 		Ok(Err(err)) | Err(err) => Err(err),
 	}
+	.map_err(|err| format!("execute error: {:?}", err))
 }
 
 /// Constructs the runtime for the given PVF, given the artifact bytes.
@@ -140,7 +140,7 @@ pub unsafe fn create_runtime_from_artifact_bytes(
 	executor_params: &ExecutorParams,
 ) -> Result<WasmtimeRuntime, WasmError> {
 	let mut config = DEFAULT_CONFIG.clone();
-	config.semantics = params_to_wasmtime_semantics(executor_params).0;
+	config.semantics = params_to_wasmtime_semantics(executor_params);
 
 	sc_executor_wasmtime::create_runtime_from_artifact_bytes::<HostFunctions>(
 		compiled_artifact_blob,
@@ -148,10 +148,7 @@ pub unsafe fn create_runtime_from_artifact_bytes(
 	)
 }
 
-/// Takes the default config and overwrites any settings with existing executor parameters.
-///
-/// Returns the semantics as well as the stack limit (since we are guaranteed to have it).
-pub fn params_to_wasmtime_semantics(par: &ExecutorParams) -> (Semantics, DeterministicStackLimit) {
+pub fn params_to_wasmtime_semantics(par: &ExecutorParams) -> Semantics {
 	let mut sem = DEFAULT_CONFIG.semantics.clone();
 	let mut stack_limit = sem
 		.deterministic_stack_limit
@@ -172,8 +169,8 @@ pub fn params_to_wasmtime_semantics(par: &ExecutorParams) -> (Semantics, Determi
 			ExecutorParam::PvfExecTimeout(_, _) => (), /* Not used here */
 		}
 	}
-	sem.deterministic_stack_limit = Some(stack_limit.clone());
-	(sem, stack_limit)
+	sem.deterministic_stack_limit = Some(stack_limit);
+	sem
 }
 
 /// Runs the prevalidation on the given code. Returns a [`RuntimeBlob`] if it succeeds.
@@ -190,7 +187,7 @@ pub fn prepare(
 	blob: RuntimeBlob,
 	executor_params: &ExecutorParams,
 ) -> Result<Vec<u8>, sc_executor_common::error::WasmError> {
-	let (semantics, _) = params_to_wasmtime_semantics(executor_params);
+	let semantics = params_to_wasmtime_semantics(executor_params);
 	sc_executor_wasmtime::prepare_runtime_artifact(blob, &semantics)
 }
 
@@ -372,7 +369,7 @@ impl sp_core::traits::ReadRuntimeVersion for ReadRuntimeVersion {
 			.map_err(|e| format!("Failed to read the static section from the PVF blob: {:?}", e))?
 		{
 			Some(version) => {
-				use codec::Encode;
+				use parity_scale_codec::Encode;
 				Ok(version.encode())
 			},
 			None => Err("runtime version section is not found".to_string()),
